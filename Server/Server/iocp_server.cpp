@@ -327,7 +327,9 @@ void process_packet(int p_id, unsigned char* packet)
 			if (STATE_INGAME != cl.m_state) {
 				continue;
 			}
-			send_chat(cl.m_id, p_id, chat_packet->message);
+			string txt = "[" + to_string(p_id) + "]" + ": " + chat_packet->message;
+			cout << "[Ã¤ÆÃ]" << txt << endl;
+			send_chat(cl.m_id, p_id, txt.c_str());
 		}
 		break;
 	}

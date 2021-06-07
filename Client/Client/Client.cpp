@@ -477,8 +477,8 @@ void ProcessPacket(char* ptr)
 	case SC_CHAT:
 	{
 		sc_packet_chat* my_packet = reinterpret_cast<sc_packet_chat*>(ptr);
-		string txt = "[" + to_string(my_packet->id) + "]" + ": " + my_packet->message;
-		putChatlist(txt);
+		//string txt = "[" + to_string(my_packet->id) + "]" + ": " + my_packet->message;
+		putChatlist(my_packet->message);
 		break;
 	}
 	default:
