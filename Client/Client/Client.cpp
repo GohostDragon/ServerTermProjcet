@@ -36,10 +36,11 @@ WSAOVERLAPPED s_over;
 
 typedef struct PlayerData
 {
-	int x = 3;
-	int y = 3;
+	int x = 3, y = 3;
+	int hp, level, exp;
 	bool bEnable = false;
 	char o_type = 0;
+	char name[MAX_ID_LEN];
 };
 PlayerData Players[MAX_USER];
 
@@ -99,6 +100,27 @@ BOOL CALLBACK DialogProc(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+BOOL CALLBACK DialogProcID(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (iMsg) {
+	case WM_INITDIALOG:
+		break;
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+			GetDlgItemText(hDlg, IDC_EDIT1, myPlayer.name, MAX_ID_LEN); // 스트링 복사
+			EndDialog(hDlg, 0);
+			break;
+		case IDCANCEL:
+			EndDialog(hDlg, 0);
+			exit(0);
+			break;
+		}
+		break;
+	}
+	return 0;
+}
+
 void display_error(const char* msg, int err_no)
 {
 	WCHAR* lpMsgBuf;
@@ -121,7 +143,7 @@ void CreateClient(HWND hWnd)
 	DialogBox(g_hinst, MAKEINTRESOURCE(IDD_DIALOG1), hWnd, (DLGPROC)&DialogProc);
 	inet_pton(AF_INET, serverip, &svr_addr.sin_addr);
 	WSAConnect(s_socket, reinterpret_cast<sockaddr*>(&svr_addr), sizeof(svr_addr), NULL, NULL, NULL, NULL);
-
+	DialogBox(g_hinst, MAKEINTRESOURCE(IDD_DIALOG2), hWnd, (DLGPROC)&DialogProcID);
 	send_login_packet();
 	InvalidateRect(hWnd, NULL, FALSE);
 }
@@ -287,12 +309,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 
 			// 상단 UI
 			RECT rt = { 510,10,600,50 };
-			int a = 100;
-			string str = "HP:" + to_string(a);
+			string str = "LEVEL:" + to_string(myPlayer.level);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
 			rt = { 510,30,600,100 };
-			str = "MP:" + to_string(a);
+			str = "EXP:" + to_string(myPlayer.exp);
+			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+			rt = { 510,50,600,150 };
+			str = "HP:" + to_string(myPlayer.hp);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
 
@@ -424,7 +449,15 @@ void ProcessPacket(char* ptr)
 		myid = packet->id;
 		myPlayer.x = packet->x;
 		myPlayer.y = packet->y;
+		myPlayer.level = packet->LEVEL;
+		myPlayer.exp = packet->EXP;
+		myPlayer.hp = packet->HP;
 		myPlayer.bEnable = true;
+	}
+	break;
+	case SC_LOGIN_FAIL:
+	{
+		exit(0);
 	}
 	break;
 	case SC_ADD_OBJECT:
@@ -531,7 +564,7 @@ void send_login_packet()
 	packet.size = sizeof(packet);
 	packet.type = CS_LOGIN;
 	//strcpy_s(packet.name, to_string(rand() % 100).c_str());
-	//strcpy_s(packet.name, "nickname");
+	strcpy_s(packet.player_id, myPlayer.name);
 
 	WSABUF s_wsabuf[1];
 	s_wsabuf[0].buf = (char*)&packet;

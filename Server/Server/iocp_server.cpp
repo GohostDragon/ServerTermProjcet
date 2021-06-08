@@ -47,6 +47,7 @@ struct SESSION
 	mutex	m_lock;
 	char	m_name[MAX_ID_LEN];
 	short	m_x, m_y;
+	int		m_hp, m_level, m_exp;
 	int		last_move_time;
 	unordered_set <int> m_viewlist;
 	mutex	m_vl;
@@ -125,9 +126,10 @@ void send_packet(int p_id, void* buf)
 void send_login_info(int p_id)
 {
 	sc_packet_login_ok packet;
-	packet.HP = 100;
+	packet.HP = players[p_id].m_hp;
 	packet.id = p_id;
-	packet.LEVEL = 3;
+	packet.LEVEL = players[p_id].m_level;
+	packet.EXP = players[p_id].m_exp;
 	packet.size = sizeof(packet);
 	packet.type = SC_LOGIN_OK;
 	packet.x = players[p_id].m_x;
@@ -161,6 +163,14 @@ void send_pc_login(int c_id, int p_id)
 	else 
 		packet.obj_class = 0;
 	send_packet(c_id, &packet);
+}
+
+void send_pc_login_fail(int p_id)
+{
+	sc_packet_login_fail packet;
+	packet.size = sizeof(packet);
+	packet.type = SC_LOGIN_FAIL;
+	send_packet(p_id, &packet);
 }
 
 void send_chat(int c_id, int p_id, const char *mess)
@@ -285,9 +295,23 @@ void process_packet(int p_id, unsigned char* packet)
 	switch (p->type) {
 	case CS_LOGIN:
 		players[p_id].m_lock.lock();
-		//strcpy_s(players[p_id].m_name, p->name);
+		strcpy_s(players[p_id].m_name, p->player_id);
+		// 플레이어하는 사람 중에 동일한 사람이 있나?
+		for (auto& p : players) {
+			if (p.m_state != STATE_INGAME) continue;
+			if (strcmp(players[p_id].m_name, p.m_name) == 0) {
+				send_pc_login_fail(p_id);
+				return;
+			}
+		}
+
+		// DB안에 저장된 아이디가 있나?
+
 		players[p_id].m_x = 0; // rand() % BOARD_WIDTH;
 		players[p_id].m_y = 0; // rand() % BOARD_HEIGHT;
+		players[p_id].m_hp = 100;
+		players[p_id].m_exp = 0;
+		players[p_id].m_level = 1;
 		send_login_info(p_id);
 		players[p_id].m_state = STATE_INGAME;
 		players[p_id].m_lock.unlock();
@@ -327,7 +351,7 @@ void process_packet(int p_id, unsigned char* packet)
 			if (STATE_INGAME != cl.m_state) {
 				continue;
 			}
-			string txt = "[" + to_string(p_id) + "]" + ": " + chat_packet->message;
+			string txt = "[" + string(players[p_id].m_name) + "]" + ": " + chat_packet->message;
 			cout << "[채팅]" << txt << endl;
 			send_chat(cl.m_id, p_id, txt.c_str());
 		}
