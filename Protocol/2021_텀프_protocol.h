@@ -1,17 +1,19 @@
 #pragma once
 
-constexpr int MAX_USER = 210000;                // 서버내의 최대 객체 개수,  객체 ID의 최대 값
+constexpr int MAX_USER = 205000;                // 서버내의 최대 객체 개수,  객체 ID의 최대 값
 constexpr int MAX_STR_LEN = 50;
 constexpr int MAX_ID_LEN = 20;
 constexpr int MAX_BUFFER = 1024;
-constexpr int NPC_ID_START = 10000;		// NPC의 ID가 시작하는 지점, 따라서 플레이어는 0부터 NPC_ID_START까지의 ID를 가짐
+constexpr int NPC_ID_START = 5000;		// NPC의 ID가 시작하는 지점, 따라서 플레이어는 0부터 NPC_ID_START까지의 ID를 가짐
 					// NPC의 개수는 MAX_USER - NPC_ID_START = 20000,  20만 마리의 NPC가 존재
 
 #define WORLD_WIDTH		2000
 #define WORLD_HEIGHT	2000
 
-	
 #define VIEW_RADIUS		7
+
+constexpr int Row = WORLD_WIDTH / (VIEW_RADIUS * 2) + 1;
+constexpr int Col = WORLD_HEIGHT / (VIEW_RADIUS * 2) + 1;
 
 #define SERVER_PORT		3500
 
@@ -49,7 +51,7 @@ struct sc_packet_position {
 	unsigned char size;
 	char type;
 	int id;
-	char x, y;
+	short x, y;
 	int move_time;			// Stress Test 프로그램에서 delay를 측정할 때 사용, 
 					// 서버는 해당 id가 접속한 클라이언트에서 보내온 최신 값을 return 해야 한다.
 };
@@ -97,6 +99,7 @@ struct cs_packet_move {
 	unsigned char	size;
 	char	type;
 	char	direction;		// 0:Up, 1:Down, 2:Left, 3:Right
+	int		move_time;
 };
 
 struct cs_packet_attack {

@@ -36,7 +36,7 @@ WSAOVERLAPPED s_over;
 
 typedef struct PlayerData
 {
-	int x = 3, y = 3;
+	short x = 3, y = 3;
 	int hp, level, exp;
 	bool bEnable = false;
 	char o_type = 0;
@@ -307,10 +307,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 				//	, BOARD_SIZEY / 2 * dy
 				//	, dx, dy);
 			}
+			// 오브젝트(NPC) 위 메세지
+			RECT rt = { 510,10,600,50 };
+			string str = "LEVEL:" + string(myPlayer.name);
+			for (int i = 0; i < MAX_USER; i++)
+			{
+				if (Players[i].bEnable)
+				{
+					if (Players[i].o_type == 0)
+					{
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
+							,int(Players[i].x* dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy)};
+						str = "Lv." + to_string(Players[i].level) + " " + string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					}
+				}
+			}
 
 			// 상단 UI
-			RECT rt = { 510,10,600,50 };
-			string str = "LEVEL:" + to_string(myPlayer.level);
+			rt = { 510,10,600,50 };
+			str = "LEVEL:" + to_string(myPlayer.level);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
 			rt = { 480,30,600,100 };
@@ -472,8 +490,12 @@ void ProcessPacket(char* ptr)
 		if (id < MAX_USER) {
 			Players[id].x = my_packet->x;
 			Players[id].y = my_packet->y;
+			Players[id].level = my_packet->LEVEL;
+			Players[id].exp = my_packet->EXP;
+			Players[id].hp = my_packet->HP;
 			Players[id].o_type = my_packet->obj_class;
 			Players[id].bEnable = true;
+			strcpy_s(Players[id].name, my_packet->name);
 		}
 		break;
 	}
