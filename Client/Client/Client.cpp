@@ -67,6 +67,7 @@ DWORD WINAPI RecvSendMsg(LPVOID arg);
 void send_login_packet();
 void send_move_packet(int dir);
 void send_chat_packet(string txt);
+void send_attack_packet();
 void process_data(char* net_buf, size_t io_byte);
 void ProcessPacket(char* ptr);
 
@@ -312,8 +313,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			string str = "LEVEL:" + to_string(myPlayer.level);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
-			rt = { 510,30,600,100 };
-			str = "EXP:" + to_string(myPlayer.exp);
+			rt = { 480,30,600,100 };
+			str = "EXP:" + to_string(myPlayer.exp) + "/" + to_string(myPlayer.level * 200);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
 			rt = { 510,50,600,150 };
@@ -362,6 +363,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			}
 			else if (wParam == 't' || wParam == 'T') {
 				chatmode = true;
+			}
+			else if (wParam == 'a' || wParam == 'A') {
+				send_attack_packet();
 			}
 		} else {
 			if (wParam == VK_RETURN) {
@@ -514,6 +518,22 @@ void ProcessPacket(char* ptr)
 		putChatlist(my_packet->message);
 		break;
 	}
+	case SC_STAT_CHANGE:
+	{
+		sc_packet_stat_change* my_packet = reinterpret_cast<sc_packet_stat_change*>(ptr);
+		int p_id = my_packet->id;
+		if (p_id == myid)
+		{
+			myPlayer.level = my_packet->LEVEL;
+			myPlayer.exp = my_packet->EXP;
+			myPlayer.hp = my_packet->HP;
+		} else {
+			Players[p_id].level = my_packet->LEVEL;
+			Players[p_id].exp = my_packet->EXP;
+			Players[p_id].hp = my_packet->HP;
+		}
+		break;
+	}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
 	}
@@ -580,6 +600,19 @@ void send_chat_packet(string txt)
 	packet.type = CS_CHAT;
 	strcpy_s(packet.message, txt.c_str());
 
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_attack_packet()
+{
+	cs_packet_attack packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_ATTACK;
+	
 	WSABUF s_wsabuf[1];
 	s_wsabuf[0].buf = (char*)&packet;
 	s_wsabuf[0].len = sizeof(packet);

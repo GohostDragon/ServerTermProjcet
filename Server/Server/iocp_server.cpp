@@ -7,6 +7,7 @@
 #include <queue>
 #include <WS2tcpip.h>
 #include <MSWSock.h>
+#include <sqlext.h>
 
 extern "C" {
 #include "lua.h"
@@ -84,6 +85,166 @@ void display_error(const char* msg, int err_no)
 	cout << msg;
 	wcout << L" 에러 " << lpMsgBuf << endl;
 	LocalFree(lpMsgBuf);
+}
+
+void db_err_display(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode)
+{
+	SQLSMALLINT iRec = 0;
+	SQLINTEGER iError;
+	WCHAR wszMessage[1000];
+	WCHAR wszState[SQL_SQLSTATE_SIZE + 1];
+	if (RetCode == SQL_INVALID_HANDLE) {
+		fwprintf(stderr, L"Invalid handle!\n");
+		return;
+	}
+	while (SQLGetDiagRec(hType, hHandle, ++iRec, wszState, &iError, wszMessage,
+		(SQLSMALLINT)(sizeof(wszMessage) / sizeof(WCHAR)), (SQLSMALLINT*)NULL) == SQL_SUCCESS) {
+		// Hide data truncated..
+		if (wcsncmp(wszState, L"01004", 5)) {
+			fwprintf(stderr, L"[%5.5s] %s (%d)\n", wszState, wszMessage, iError);
+		}
+	}
+}
+
+void save_player(int p_id) {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"GSDB", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+					string s(players[p_id].m_name);
+					wstring temp(s.length(), L' ');
+					copy(s.begin(), s.end(), temp.begin());
+					wstring str = L"EXEC save_t_player " 
+						+ temp
+						+ L", " + to_wstring(players[p_id].m_x)
+						+ L", " + to_wstring(players[p_id].m_y)
+						+ L", " + to_wstring(players[p_id].m_level)
+						+ L", " + to_wstring(players[p_id].m_exp)
+						+ L", " + to_wstring(players[p_id].m_hp);
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR*)str.c_str(), SQL_NTS);
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						cout << "[시스템]" << players[p_id].m_name << "님의 데이터 저장완료 되었습니다." << endl;
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
+		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
+}
+
+void load_player(int p_id) {
+	SQLHENV henv;
+	SQLHDBC hdbc;
+	SQLHSTMT hstmt = 0;
+	SQLRETURN retcode;
+	SQLWCHAR szName[15];
+	SQLINTEGER CharX, CharY, CharExp, CharLevel, CharHp;
+	SQLLEN cbName = 0, cbCharX = 0, cbCharY = 0, cbCharExp = 0, cbCharLevel = 0, cbCharHp = 0;
+
+	// Allocate environment handle  
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	// Set the ODBC version environment attribute  
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+		// Allocate connection handle  
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			// Set login timeout to 5 seconds  
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+
+				// Connect to data source  
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"GSDB", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+
+				// Allocate statement handle  
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+					wstring str = L"EXEC load_t_player " + wstring(players[p_id].m_name, &players[p_id].m_name[MAX_ID_LEN]);
+					retcode = SQLExecDirect(hstmt, (SQLWCHAR*)str.c_str(), SQL_NTS);
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						// Bind columns 1, 2, and 3  
+						retcode = SQLBindCol(hstmt, 1, SQL_C_ULONG, &CharX, 10, &cbCharX);
+						retcode = SQLBindCol(hstmt, 2, SQL_C_ULONG, &CharY, 10, &cbCharY);
+						retcode = SQLBindCol(hstmt, 3, SQL_C_ULONG, &CharLevel, 10, &cbCharLevel);
+						retcode = SQLBindCol(hstmt, 4, SQL_C_ULONG, &CharExp, 10, &cbCharExp);
+						retcode = SQLBindCol(hstmt, 5, SQL_C_ULONG, &CharHp, 10, &cbCharHp);
+
+						// Fetch and print each row of data. On an error, display a message and exit.  
+						for (int i = 0; ; i++) {
+							retcode = SQLFetch(hstmt);
+							if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO) {
+								//db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+							}
+							if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
+							{
+								players[p_id].m_x = CharX;
+								players[p_id].m_y = CharY;
+								players[p_id].m_level = CharLevel;
+								players[p_id].m_exp = CharExp;
+								players[p_id].m_hp = CharHp;
+							}
+							else
+								break;
+						}
+					}
+					else {
+						db_err_display(hstmt, SQL_HANDLE_STMT, retcode);
+					}
+
+					// Process data  
+					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+						SQLCancel(hstmt);
+						SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+					}
+
+					SQLDisconnect(hdbc);
+				}
+
+				SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+			}
+		}
+		SQLFreeHandle(SQL_HANDLE_ENV, henv);
+	}
 }
 
 int add_event(int id, OP_TYPE ev, int delay_ms)
@@ -180,6 +341,18 @@ void send_chat(int c_id, int p_id, const char *mess)
 	packet.size = sizeof(packet);
 	packet.type = SC_CHAT;
 	strcpy_s(packet.message, mess);
+	send_packet(c_id, &packet);
+}
+
+void send_stat_change(int c_id, int p_id)
+{
+	sc_packet_stat_change packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.LEVEL = players[p_id].m_level;
+	packet.EXP = players[p_id].m_exp;
+	packet.HP = players[p_id].m_hp;
+	packet.type = SC_STAT_CHANGE;
 	send_packet(c_id, &packet);
 }
 
@@ -289,6 +462,16 @@ void player_move(int p_id, char dir)
 
 }
 
+void player_attack(int p_id)
+{
+	players[p_id].m_exp += 50;
+	if (players[p_id].m_exp >= players[p_id].m_level * 200) {
+		players[p_id].m_exp = 0;
+		players[p_id].m_level += 1;
+	}
+	send_stat_change(p_id, p_id);
+}
+
 void process_packet(int p_id, unsigned char* packet)
 {
 	cs_packet_login* p = reinterpret_cast<cs_packet_login*>(packet);
@@ -305,13 +488,14 @@ void process_packet(int p_id, unsigned char* packet)
 			}
 		}
 
-		// DB안에 저장된 아이디가 있나?
-
 		players[p_id].m_x = 0; // rand() % BOARD_WIDTH;
 		players[p_id].m_y = 0; // rand() % BOARD_HEIGHT;
 		players[p_id].m_hp = 100;
 		players[p_id].m_exp = 0;
 		players[p_id].m_level = 1;
+		// DB안에 저장된 아이디가 있나?
+		load_player(p_id);
+
 		send_login_info(p_id);
 		players[p_id].m_state = STATE_INGAME;
 		players[p_id].m_lock.unlock();
@@ -343,8 +527,8 @@ void process_packet(int p_id, unsigned char* packet)
 		cs_packet_move* move_packet = reinterpret_cast<cs_packet_move*>(packet);
 		//players[p_id].last_move_time = move_packet->move_time;
 		player_move(p_id, move_packet->direction);
-	}
 		break;
+	}
 	case CS_CHAT: {
 		cs_packet_chat* chat_packet = reinterpret_cast<cs_packet_chat*>(packet);
 		for (auto& cl : players) {
@@ -355,6 +539,12 @@ void process_packet(int p_id, unsigned char* packet)
 			cout << "[채팅]" << txt << endl;
 			send_chat(cl.m_id, p_id, txt.c_str());
 		}
+		break;
+	}
+	case CS_ATTACK: {
+		cs_packet_move* move_packet = reinterpret_cast<cs_packet_move*>(packet);
+		//players[p_id].last_move_time = move_packet->move_time;
+		player_attack(p_id);
 		break;
 	}
 	default :
@@ -413,6 +603,7 @@ void disconnect(int p_id)
 {
 
 	players[p_id].m_lock.lock();
+	save_player(p_id);
 	unordered_set <int> old_vl = players[p_id].m_viewlist;
 	players[p_id].m_state = STATE_CONNECTED;
 	closesocket(players[p_id].m_s);
@@ -657,6 +848,7 @@ int API_send_message(lua_State* L)
 int main()
 {
 	wcout.imbue(locale("korean"));
+	setlocale(LC_ALL, "korean");
 
 	for (int i = 0; i < MAX_USER;++i) {
 		auto& pl = players[i];
