@@ -26,7 +26,7 @@ using namespace std;
 
 constexpr int NUM_THREADS = 4;
 
-enum OP_TYPE { OP_RECV, OP_SEND, OP_ACCEPT, OP_RANDOM_MOVE, OP_PLAYER_MOVE };
+enum OP_TYPE { OP_RECV, OP_SEND, OP_ACCEPT, OP_RANDOM_MOVE, OP_PLAYER_MOVE, OP_NPC_RESPAWN };
 enum S_STATE {STATE_FREE, STATE_CONNECTED, STATE_INGAME};
 struct EX_OVER {
 	WSAOVERLAPPED	m_over;
@@ -364,6 +364,7 @@ void send_stat_change(int c_id, int p_id)
 	packet.LEVEL = players[p_id].m_level;
 	packet.EXP = players[p_id].m_exp;
 	packet.HP = players[p_id].m_hp;
+	packet.STATE = players[p_id].m_state;
 	packet.type = SC_STAT_CHANGE;
 	send_packet(c_id, &packet);
 }
@@ -588,8 +589,242 @@ void player_move(int p_id, char dir)
 
 }
 
+void player_teleport(int p_id, short x, short y)
+{
+	if (players[p_id].m_x == x && players[p_id].m_y == y)
+		return;
+
+	players[p_id].m_vl.lock();
+	unordered_set <int> old_vl = players[p_id].m_viewlist;
+	players[p_id].m_vl.unlock();
+
+	// 섹터 영역 구하기
+	int row = players[p_id].m_x / (VIEW_RADIUS * 2);
+	int col = players[p_id].m_y / (VIEW_RADIUS * 2);
+
+	players[p_id].m_x = x;
+	players[p_id].m_y = y;
+
+	// 움직여서 섹터 영역이 바뀜
+	if (row != players[p_id].m_x / (VIEW_RADIUS * 2) || col != players[p_id].m_y / (VIEW_RADIUS * 2))
+	{
+		// 전에 있던 섹터 영역 플레이어 삭제
+		g_ObjectListSector[row][col].m_lock.lock();
+		g_ObjectListSector[row][col].m_sectionlist.erase(p_id);
+		g_ObjectListSector[row][col].m_lock.unlock();
+
+		row = players[p_id].m_x / (VIEW_RADIUS * 2);
+		col = players[p_id].m_y / (VIEW_RADIUS * 2);
+
+		// 새로 들어온 섹터 영역 플레이어 추가
+		g_ObjectListSector[row][col].m_lock.lock();
+		g_ObjectListSector[row][col].m_sectionlist.insert(p_id);
+		g_ObjectListSector[row][col].m_lock.unlock();
+	}
+
+	g_ObjectListSector[row][col].m_lock.lock();
+	unordered_set <int> tmpObjectListSector = g_ObjectListSector[row][col].m_sectionlist;
+	g_ObjectListSector[row][col].m_lock.unlock();
+
+
+	int trol = row + 1;
+	int tcol = col;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x + 5) < WORLD_WIDTH)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row;
+	tcol = col + 1;
+	if ((players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row;
+	tcol = col - 1;
+	if ((players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row + 1;
+	tcol = col + 1;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row + 1;
+	tcol = col - 1;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col + 1;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col - 1;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	unordered_set <int> new_vl;
+	for (auto& cl : tmpObjectListSector) {
+		if (p_id == cl) continue;
+
+		players[cl].m_lock.lock();
+		if (STATE_INGAME != players[cl].m_state) {
+			players[cl].m_lock.unlock();
+			continue;
+		}
+		if (can_see(p_id, cl))
+			new_vl.insert(cl);
+		players[cl].m_lock.unlock();
+	}
+
+	send_move_packet(p_id, p_id);
+
+	for (auto npc : new_vl) {
+		//if (false == is_npc(npc)) continue;
+		//EX_OVER* ex_over = new EX_OVER;
+		//ex_over->m_op = OP_PLAYER_MOVE;
+		//ex_over->m_traget_id = p_id;
+		//PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
+	}
+
+	for (auto pl : new_vl) {
+		players[p_id].m_vl.lock();
+		if (0 == players[p_id].m_viewlist.count(pl)) {
+			// 1. 새로 시야에 들어오는 플레이어 처리
+			players[p_id].m_viewlist.insert(pl);
+			players[p_id].m_vl.unlock();
+			send_add_object(p_id, pl);
+			if (true == is_npc(pl)) continue;
+			players[pl].m_vl.lock();
+			if (0 == players[pl].m_viewlist.count(p_id)) {
+				players[pl].m_viewlist.insert(p_id);
+				players[pl].m_vl.unlock();
+				send_add_object(pl, p_id);
+			}
+			else {
+				players[pl].m_vl.unlock();
+				send_move_packet(pl, p_id);
+			}
+		}
+		else {
+			// 2. 처음 부터 끝까지 시야에 존재하는 플레이어 처리
+			players[p_id].m_vl.unlock();
+			if (true == is_npc(p_id)) continue;
+			players[pl].m_vl.lock();
+			if (0 == players[pl].m_viewlist.count(p_id)) {
+				players[pl].m_viewlist.insert(p_id);
+				players[pl].m_vl.unlock();
+				send_add_object(pl, p_id);
+			}
+			else {
+				players[pl].m_vl.unlock();
+				send_move_packet(pl, p_id);
+			}
+		}
+	}
+
+	for (auto pl : old_vl) {
+		if (0 == new_vl.count(pl)) {
+			players[p_id].m_vl.lock();
+			players[p_id].m_viewlist.erase(pl);
+			players[p_id].m_vl.unlock();
+			send_pc_logout(p_id, pl);
+			if (true == is_npc(pl)) continue;
+			players[pl].m_vl.lock();
+			if (0 != players[pl].m_viewlist.count(p_id)) {
+				players[pl].m_viewlist.erase(p_id);
+				players[pl].m_vl.unlock();
+				send_pc_logout(pl, p_id);
+			}
+			else
+				players[pl].m_vl.unlock();
+		}
+	}
+	// 3. 시야에서 벗어나는 플레이어 처리
+}
+
 void player_attack(int p_id)
 {
+	players[p_id].m_lock.lock();
+	short px = players[p_id].m_x;
+	short py = players[p_id].m_y;
+	players[p_id].m_lock.unlock();
+
+	for (auto& npc : players[p_id].m_viewlist) {
+		if (is_npc(npc) == false) continue;
+		players[npc].m_lock.lock();
+		short nx = players[npc].m_x;
+		short ny = players[npc].m_y;
+		players[npc].m_lock.unlock();
+		if ((nx == px && ny == py)
+			|| (nx == px + 1 && ny == py)
+			|| (nx == px - 1 && ny == py)
+			|| (nx == px && ny == py + 1)
+			|| (nx == px && ny == py - 1))
+		{
+			players[npc].m_lock.lock();
+			players[npc].m_hp -= 30;
+			if (players[npc].m_hp <= 0) {
+				players[npc].m_state = STATE_FREE;
+				players[npc].m_lock.unlock();
+				add_event(npc, OP_NPC_RESPAWN, 1000);
+			}
+			else {
+				players[npc].m_lock.unlock();
+			}
+			send_stat_change(p_id, npc);
+		}
+	}
+
+
 	players[p_id].m_exp += 50;
 	if (players[p_id].m_exp >= players[p_id].m_level * 200) {
 		players[p_id].m_exp = 0;
@@ -779,13 +1014,42 @@ void process_packet(int p_id, unsigned char* packet)
 	}
 	case CS_CHAT: {
 		cs_packet_chat* chat_packet = reinterpret_cast<cs_packet_chat*>(packet);
-		for (auto& cl : players) {
-			if (STATE_INGAME != cl.m_state) {
-				continue;
+
+		if (chat_packet->message[0] == '/') {
+			string as(chat_packet->message);
+			istringstream ss(as);
+			string stringBuff;
+			vector<string> x;
+			while (getline(ss, stringBuff, ' '))
+				x.push_back(stringBuff);
+
+			if (x[0] == "/party") {
+				if (x.size() == 2)
+				{
+					cout << x[1] << "님과 파티를 맺었습니다!" << endl;
+				}else {
+					cout << "/party [플레이어 이름]" << endl;
+				}
 			}
-			string txt = "[" + string(players[p_id].m_name) + "]" + ": " + chat_packet->message;
-			cout << "[채팅]" << txt << endl;
-			send_chat(cl.m_id, p_id, txt.c_str());
+
+			if (x[0] == "/pos") {
+				if (x.size() == 3)
+				{
+					cout << "(" << x[1] << ", " << x[2] << ") 좌표로 이동하였습니다!" << endl;
+					player_teleport(p_id, stoi(x[1]), stoi(x[2]));
+				}else {
+					cout << "/pos [x좌표] [y좌표]" << endl;
+				}
+			}
+		}else {
+			for (int i = 0; i < NPC_ID_START; ++i) {
+				if (STATE_INGAME != players[i].m_state) {
+					continue;
+				}
+				string txt = "[" + string(players[p_id].m_name) + "]" + ": " + chat_packet->message;
+				cout << "[채팅]" << txt << endl;
+				send_chat(players[i].m_id, p_id, txt.c_str());
+			}
 		}
 		break;
 	}
@@ -815,7 +1079,7 @@ void do_recv(int p_id)
 
 int get_new_player_id()
 {
-	for (int i = 0; i < MAX_USER; ++i) {
+	for (int i = 0; i < NPC_ID_START; ++i) {
 		players[i].m_lock.lock();
 		if (STATE_FREE == players[i].m_state) {
 			players[i].m_state = STATE_CONNECTED;
@@ -1030,14 +1294,27 @@ void do_timer()
 			timer_queue.pop();
 			timer_lock.unlock();
 			switch (ev.event_type) {
-			case OP_RANDOM_MOVE:
-				EX_OVER* ex_over = new EX_OVER;
-				ex_over->m_op = OP_RANDOM_MOVE;
-				PostQueuedCompletionStatus(h_iocp, 1, ev.object_id, &ex_over->m_over);
-				//do_random_move_npc(ev.object_id);
-				//add_event(ev.object_id, OP_RANDOM_MOVE, 1000);
-				break;
+				case OP_RANDOM_MOVE: {
+					EX_OVER* ex_over = new EX_OVER;
+					ex_over->m_op = OP_RANDOM_MOVE;
+					PostQueuedCompletionStatus(h_iocp, 1, ev.object_id, &ex_over->m_over);
+					//do_random_move_npc(ev.object_id);
+					//add_event(ev.object_id, OP_RANDOM_MOVE, 1000);
+					break;
+				}
+				case OP_NPC_RESPAWN: {
+					players[ev.object_id].m_lock.lock();
+					players[ev.object_id].m_state = STATE_INGAME;
+					players[ev.object_id].m_hp = 100;
+					players[ev.object_id].m_lock.unlock();
+					for (auto& v : players[ev.object_id].m_viewlist) {
+						if (is_npc(v)) continue;
+						send_add_object(v, ev.object_id);
+					}
+					break;
+				}
 			}
+
 		}
 	}
 }
@@ -1086,6 +1363,7 @@ int main()
 			//strcpy_s(pl.m_name, to_string(i).c_str());
 			pl.m_x = rand() % WORLD_WIDTH;
 			pl.m_y = rand() % WORLD_HEIGHT;
+			pl.m_hp = 100;
 			pl.m_state = STATE_INGAME;
 			//add_event(i, OP_RANDOM_MOVE, 1000);
 			pl.L = luaL_newstate();

@@ -12,6 +12,7 @@
 
 #include "..\..\Protocol\2021_텀프_protocol.h"
 
+enum S_STATE { STATE_FREE, STATE_CONNECTED, STATE_INGAME };
 using namespace std;
 //서버 관련
 #pragma comment(lib, "WS2_32.LIB")
@@ -38,7 +39,7 @@ typedef struct PlayerData
 {
 	short x = 3, y = 3;
 	int hp, level, exp;
-	bool bEnable = false;
+	char state = STATE_FREE;
 	char o_type = 0;
 	char name[MAX_ID_LEN];
 };
@@ -247,8 +248,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 		img.Create(rectView.right, rectView.bottom, 24);
 		hDC = BeginPaint(hWnd, &ps);
 
-		myPlayer.bEnable = true;
-
 		memDC = img.GetDC();
 		{
 			Rectangle(memDC, 0, 0, rectView.right,rectView.bottom);
@@ -268,7 +267,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 
 			for (int i = 0; i < MAX_USER; i++)
 			{
-				if (Players[i].bEnable)
+				if (Players[i].state == STATE_INGAME)
 				{
 					if (Players[i].o_type == 0)
 					{
@@ -294,7 +293,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 				}
 			}
 
-			if (myPlayer.bEnable) {
+			if (myPlayer.state == STATE_INGAME) {
 				chess.Draw(memDC
 					, BOARD_SIZEX / 2 * dx
 					, BOARD_SIZEY / 2 * dy
@@ -312,7 +311,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			string str = "LEVEL:" + string(myPlayer.name);
 			for (int i = 0; i < MAX_USER; i++)
 			{
-				if (Players[i].bEnable)
+				if (Players[i].state == STATE_INGAME)
 				{
 					if (Players[i].o_type == 0)
 					{
@@ -321,6 +320,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 							,int(Players[i].x* dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
 							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy)};
 						str = "Lv." + to_string(Players[i].level) + " " + string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					}
+					else {
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
+						str = "HP:" + to_string(Players[i].hp);
 						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 					}
 				}
@@ -474,7 +481,7 @@ void ProcessPacket(char* ptr)
 		myPlayer.level = packet->LEVEL;
 		myPlayer.exp = packet->EXP;
 		myPlayer.hp = packet->HP;
-		myPlayer.bEnable = true;
+		myPlayer.state = STATE_INGAME;
 	}
 	break;
 	case SC_LOGIN_FAIL:
@@ -494,7 +501,7 @@ void ProcessPacket(char* ptr)
 			Players[id].exp = my_packet->EXP;
 			Players[id].hp = my_packet->HP;
 			Players[id].o_type = my_packet->obj_class;
-			Players[id].bEnable = true;
+			Players[id].state = STATE_INGAME;
 			strcpy_s(Players[id].name, my_packet->name);
 		}
 		break;
@@ -523,10 +530,10 @@ void ProcessPacket(char* ptr)
 		sc_packet_remove_object* my_packet = reinterpret_cast<sc_packet_remove_object*>(ptr);
 		int other_id = my_packet->id;
 		if (other_id == myid) {
-			myPlayer.bEnable = false;
+			myPlayer.state = STATE_FREE;
 		}
 		else if (other_id < MAX_USER) {
-			Players[other_id].bEnable = false;
+			Players[other_id].state = STATE_FREE;
 		}
 		else {
 			//		npc[other_id - NPC_START].attr &= ~BOB_ATTR_VISIBLE;
@@ -549,10 +556,12 @@ void ProcessPacket(char* ptr)
 			myPlayer.level = my_packet->LEVEL;
 			myPlayer.exp = my_packet->EXP;
 			myPlayer.hp = my_packet->HP;
+
 		} else {
 			Players[p_id].level = my_packet->LEVEL;
 			Players[p_id].exp = my_packet->EXP;
 			Players[p_id].hp = my_packet->HP;
+			Players[p_id].state = my_packet->STATE;
 		}
 		break;
 	}

@@ -68,6 +68,7 @@ struct sc_packet_stat_change {
 	char	type;
 	int	id;
 	int	HP, LEVEL, EXP;
+	char STATE;
 };
 
 
