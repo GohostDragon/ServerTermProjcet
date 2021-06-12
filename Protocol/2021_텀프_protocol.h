@@ -23,6 +23,9 @@ constexpr int Col = WORLD_HEIGHT / (VIEW_RADIUS * 2) + 1;
 #define CS_CHAT		4		// 아바타가 채팅
 #define CS_LOGOUT	5		// 클라이언트 종료
 #define CS_TELEPORT	6		// 랜덤 텔레포트 요청, 동접테스트시 아바타를 맵에 골고루 배치시키기 위함, 이것이 없으면 시작 위치가 HOTSPOT이 됨
+#define CS_PARTY_INVITE 7	// 파티 초대
+#define CS_PARTY_ACCEPT 8	// 파티 수락
+#define CS_PARTY_DENY 9		// 파티 거절
 
 #define SC_LOGIN_OK		1	// CS_LOGIN의 응답 패킷, 서버에서 클라이언트의 접속을 수락
 #define SC_LOGIN_FAIL		2	// CS_LOGIN의 응답 패킷, 서버에서 클라이언트의 접속을 거절
@@ -31,6 +34,9 @@ constexpr int Col = WORLD_HEIGHT / (VIEW_RADIUS * 2) + 1;
 #define SC_STAT_CHANGE		5	// OBJECT의 정보가 변경되었음을 통보
 #define SC_REMOVE_OBJECT		6	// OBJECT가 시야에서 사라 졌음
 #define SC_ADD_OBJECT		7	// 새로운 OBJECT가 시야에 들어 왔음
+#define SC_PARTY_INVITE	8
+#define SC_PARTY_JOIN	9
+#define SC_PARTY_LEAVE	10
 
 #pragma pack(push ,1)
 
@@ -89,6 +95,23 @@ struct sc_packet_add_object {
 
 };
 
+struct sc_packet_party_invite {
+	unsigned char size;
+	char type;
+	int id;
+};
+
+struct sc_packet_party_join {
+	unsigned char size;
+	char type;
+	int id;
+};
+
+struct sc_packet_party_leave {
+	unsigned char size;
+	char type;
+	int id;
+};
 
 struct cs_packet_login {
 	unsigned char	size;
@@ -122,6 +145,24 @@ struct cs_packet_logout {
 struct cs_packet_teleport {
 	unsigned char	size;
 	char	type;
+};
+
+struct cs_packet_party_invite {
+	unsigned char	size;
+	char	type;
+	int		id;
+};
+
+struct cs_packet_party_accept {
+	unsigned char	size;
+	char	type;
+	int		id;
+};
+
+struct cs_packet_party_deny {
+	unsigned char	size;
+	char	type;
+	int		id;
 };
 
 

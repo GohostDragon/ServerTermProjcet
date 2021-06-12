@@ -7,6 +7,7 @@
 #include <time.h>
 #include <atlImage.h>
 #include <deque>
+#include <unordered_set>
 
 #include "resource.h"
 
@@ -48,8 +49,10 @@ PlayerData Players[MAX_USER];
 PlayerData myPlayer;
 int myid;
 
+int partyid;
 
 deque<string> chattxt;
+unordered_set<int> partylist;
 
 // 윈도우 프로그래밍 관련
 HINSTANCE g_hinst;
@@ -65,12 +68,7 @@ BOOL CALLBACK DialogProc(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam);
 //Recv 스레드 함수
 DWORD WINAPI RecvSendMsg(LPVOID arg);
 
-void send_login_packet();
-void send_move_packet(int dir);
-void send_chat_packet(string txt);
-void send_attack_packet();
-void process_data(char* net_buf, size_t io_byte);
-void ProcessPacket(char* ptr);
+void ProcessPacket(char* ptr, HWND hWnd);
 
 void putChatlist(const string& txt)
 {
@@ -79,6 +77,120 @@ void putChatlist(const string& txt)
 		chattxt.pop_back();
 	}
 	chattxt.push_front(txt);
+}
+
+void process_data(char* net_buf, size_t io_byte , HWND hWnd)
+{
+	char* ptr = net_buf;
+	static size_t in_packet_size = 0;
+	static size_t saved_packet_size = 0;
+	static char packet_buffer[BUF_SIZE];
+
+	while (0 != io_byte) {
+		if (0 == in_packet_size) in_packet_size = ptr[0];
+		if (io_byte + saved_packet_size >= in_packet_size) {
+			memcpy(packet_buffer + saved_packet_size, ptr, in_packet_size - saved_packet_size);
+			ProcessPacket(packet_buffer, hWnd);
+			ptr += in_packet_size - saved_packet_size;
+			io_byte -= in_packet_size - saved_packet_size;
+			in_packet_size = 0;
+			saved_packet_size = 0;
+		}
+		else {
+			memcpy(packet_buffer + saved_packet_size, ptr, io_byte);
+			saved_packet_size += io_byte;
+			io_byte = 0;
+		}
+	}
+}
+
+void send_move_packet(int dir)
+{
+	cs_packet_move packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_MOVE;
+	packet.direction = dir;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_login_packet()
+{
+	cs_packet_login packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_LOGIN;
+	//strcpy_s(packet.name, to_string(rand() % 100).c_str());
+	strcpy_s(packet.player_id, myPlayer.name);
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_chat_packet(string txt)
+{
+	cs_packet_chat packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_CHAT;
+	strcpy_s(packet.message, txt.c_str());
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_attack_packet()
+{
+	cs_packet_attack packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_ATTACK;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_party_invite()
+{
+
+}
+
+void send_party_accept(int p_id)
+{
+	cs_packet_party_accept packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_PARTY_ACCEPT;
+	packet.id = p_id;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_party_deny(int p_id)
+{
+	cs_packet_party_deny packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_PARTY_DENY;
+	packet.id = p_id;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
 }
 
 BOOL CALLBACK DialogProc(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam)
@@ -114,6 +226,28 @@ BOOL CALLBACK DialogProcID(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			EndDialog(hDlg, 0);
 			break;
 		case IDCANCEL:
+			EndDialog(hDlg, 0);
+			exit(0);
+			break;
+		}
+		break;
+	}
+	return 0;
+}
+
+BOOL CALLBACK DialogProcParty(HWND hDlg, UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (iMsg) {
+	case WM_INITDIALOG:
+		break;
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+			send_party_accept(partyid);
+			EndDialog(hDlg, 0);
+			break;
+		case IDCANCEL:
+			send_party_deny(partyid);
 			EndDialog(hDlg, 0);
 			exit(0);
 			break;
@@ -164,7 +298,7 @@ DWORD WINAPI RecvSendMsg(LPVOID arg)
 		DWORD r_flag = 0;
 		auto recv_result = WSARecv(s_socket, r_wsabuf, 1, &bytes_recv, &r_flag, 0, 0);
 
-		if (bytes_recv > 0) process_data(net_buf, bytes_recv);
+		if (bytes_recv > 0) process_data(net_buf, bytes_recv, hWnd);
 
 		InvalidateRect(hWnd, NULL, FALSE);
 	}
@@ -290,6 +424,30 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 							, 0, 132
 							, 132, 132);
 					}
+					else if (Players[i].o_type == 2) {
+						chess.Draw(memDC
+							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
+							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
+							, dx, dy
+							, 0, 132
+							, 132, 132);
+					}
+					else if (Players[i].o_type == 3) {
+						chess.Draw(memDC
+							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
+							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
+							, dx, dy
+							, 0, 132
+							, 132, 132);
+					}
+					else if (Players[i].o_type == 4) {
+						chess.Draw(memDC
+							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
+							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
+							, dx, dy
+							, 0, 132
+							, 132, 132);
+					}
 				}
 			}
 
@@ -321,12 +479,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy)};
 						str = "Lv." + to_string(Players[i].level) + " " + string(Players[i].name);
 						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
-					}
-					else {
+					} else if (Players[i].o_type == 1) {
 						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
 							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
 							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
 							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
+						str = string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					} else if (Players[i].o_type >= 2) {
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
+						str = "Lv." + to_string(Players[i].level) + " " + string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 40)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20) };
 						str = "HP:" + to_string(Players[i].hp);
 						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 					}
@@ -359,6 +531,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 				rt = { 10,500-i*20,1000,540 - i * 20 };
 				DrawText(memDC, txt.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 				i++;
+			}
+
+			//파티원목록
+			if (partylist.size() > 0)
+			{
+				rt = { 400,100,600,150 };
+				str = "파티원 목록";
+				DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+				int i = 1;
+				for (const auto& p : partylist)
+				{
+					str = "Lv." + to_string(Players[p].level) + " " + Players[p].name + " HP: " + to_string(Players[p].hp) +"";
+					rt = { 400,100 + i * 20,600,150 + i * 20 };
+					DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					++i;
+				}
 			}
 
 			img.Draw(hDC, 0, 0);
@@ -467,7 +655,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 	return(DefWindowProcA(hWnd, iMessage, wParam, IParam));//위의 세 메세지 외의 나머지 메세지는 OS로
 }
 
-void ProcessPacket(char* ptr)
+void ProcessPacket(char* ptr, HWND hWnd)
 {
 	static bool first_time = true;
 	switch (ptr[1])
@@ -565,88 +753,26 @@ void ProcessPacket(char* ptr)
 		}
 		break;
 	}
+	case SC_PARTY_INVITE:
+	{
+		sc_packet_party_invite* my_packet = reinterpret_cast<sc_packet_party_invite*>(ptr);
+		partyid = my_packet->id;
+		DialogBox(g_hinst, MAKEINTRESOURCE(IDD_DIALOG3), hWnd, (DLGPROC)&DialogProcParty);
+		break;
+	}
+	case SC_PARTY_JOIN:
+	{
+		sc_packet_party_join* my_packet = reinterpret_cast<sc_packet_party_join*>(ptr);
+		partylist.insert(my_packet->id);
+		break;
+	}
+	case SC_PARTY_LEAVE:
+	{
+		sc_packet_party_leave* my_packet = reinterpret_cast<sc_packet_party_leave*>(ptr);
+		partylist.erase(my_packet->id);
+		break;
+	}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
 	}
-}
-
-void process_data(char* net_buf, size_t io_byte)
-{
-	char* ptr = net_buf;
-	static size_t in_packet_size = 0;
-	static size_t saved_packet_size = 0;
-	static char packet_buffer[BUF_SIZE];
-
-	while (0 != io_byte) {
-		if (0 == in_packet_size) in_packet_size = ptr[0];
-		if (io_byte + saved_packet_size >= in_packet_size) {
-			memcpy(packet_buffer + saved_packet_size, ptr, in_packet_size - saved_packet_size);
-			ProcessPacket(packet_buffer);
-			ptr += in_packet_size - saved_packet_size;
-			io_byte -= in_packet_size - saved_packet_size;
-			in_packet_size = 0;
-			saved_packet_size = 0;
-		}
-		else {
-			memcpy(packet_buffer + saved_packet_size, ptr, io_byte);
-			saved_packet_size += io_byte;
-			io_byte = 0;
-		}
-	}
-}
-
-void send_move_packet(int dir)
-{
-	cs_packet_move packet;
-	packet.size = sizeof(packet);
-	packet.type = CS_MOVE;
-	packet.direction = dir;
-
-	WSABUF s_wsabuf[1];
-	s_wsabuf[0].buf = (char*)&packet;
-	s_wsabuf[0].len = sizeof(packet);
-	DWORD sent_bytes;
-	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
-}
-
-void send_login_packet()
-{
-	cs_packet_login packet;
-	packet.size = sizeof(packet);
-	packet.type = CS_LOGIN;
-	//strcpy_s(packet.name, to_string(rand() % 100).c_str());
-	strcpy_s(packet.player_id, myPlayer.name);
-
-	WSABUF s_wsabuf[1];
-	s_wsabuf[0].buf = (char*)&packet;
-	s_wsabuf[0].len = sizeof(packet);
-	DWORD sent_bytes;
-	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
-}
-
-void send_chat_packet(string txt)
-{
-	cs_packet_chat packet;
-	packet.size = sizeof(packet);
-	packet.type = CS_CHAT;
-	strcpy_s(packet.message, txt.c_str());
-
-	WSABUF s_wsabuf[1];
-	s_wsabuf[0].buf = (char*)&packet;
-	s_wsabuf[0].len = sizeof(packet);
-	DWORD sent_bytes;
-	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
-}
-
-void send_attack_packet()
-{
-	cs_packet_attack packet;
-	packet.size = sizeof(packet);
-	packet.type = CS_ATTACK;
-	
-	WSABUF s_wsabuf[1];
-	s_wsabuf[0].buf = (char*)&packet;
-	s_wsabuf[0].len = sizeof(packet);
-	DWORD sent_bytes;
-	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
 }

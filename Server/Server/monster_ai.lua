@@ -11,7 +11,7 @@ function event_player_move(p_id)
 	m_y = API_get_y(myid)
 	if (p_x == m_x) then
 		if (p_y == m_y) then
-			API_send_message(myid, p_id, "HELLO");
+			API_damage_player(myid, p_id);
 		end
 	end
 end

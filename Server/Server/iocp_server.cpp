@@ -37,6 +37,14 @@ struct EX_OVER {
 	int				m_traget_id;
 };
 
+struct ITEM {
+	char hp_postion;
+	char powerup;
+	char gobline_horn;
+	char oni_bet;
+
+};
+
 struct SESSION
 {
 	int				m_id;
@@ -50,10 +58,17 @@ struct SESSION
 	short	m_x, m_y;
 	int		m_hp, m_level, m_exp;
 	int		last_move_time;
+	int		m_obj_class;
+
+	bool	moving = false;
+
 	unordered_set <int> m_viewlist;
 	mutex	m_vl;
 	lua_State* L;
 	mutex	m_sl;
+
+	unordered_set <int> m_partylist;
+	mutex	m_pl;
 };
 
 struct timer_event {
@@ -81,6 +96,8 @@ SESSION players[MAX_USER];
 SOCKET listenSocket;
 HANDLE h_iocp;
 SECTOR g_ObjectListSector[Row][Col];
+
+void do_random_move_npc(int id);
 
 void display_error(const char* msg, int err_no)
 {
@@ -256,6 +273,127 @@ void load_player(int p_id) {
 	}
 }
 
+unordered_set <int> get_sector(int p_id, unordered_set <int>& old_vl, short x, short y)
+{
+	players[p_id].m_vl.lock();
+	old_vl = players[p_id].m_viewlist;
+	players[p_id].m_vl.unlock();
+
+	// 섹터 영역 구하기
+	int row = players[p_id].m_x / (VIEW_RADIUS * 2);
+	int col = players[p_id].m_y / (VIEW_RADIUS * 2);
+
+	players[p_id].m_x = x;
+	players[p_id].m_y = y;
+
+	// 움직여서 섹터 영역이 바뀜
+	if (row != players[p_id].m_x / (VIEW_RADIUS * 2) || col != players[p_id].m_y / (VIEW_RADIUS * 2))
+	{
+		// 전에 있던 섹터 영역 플레이어 삭제
+		g_ObjectListSector[row][col].m_lock.lock();
+		g_ObjectListSector[row][col].m_sectionlist.erase(p_id);
+		g_ObjectListSector[row][col].m_lock.unlock();
+
+		row = players[p_id].m_x / (VIEW_RADIUS * 2);
+		col = players[p_id].m_y / (VIEW_RADIUS * 2);
+
+		// 새로 들어온 섹터 영역 플레이어 추가
+		g_ObjectListSector[row][col].m_lock.lock();
+		g_ObjectListSector[row][col].m_sectionlist.insert(p_id);
+		g_ObjectListSector[row][col].m_lock.unlock();
+	}
+
+	g_ObjectListSector[row][col].m_lock.lock();
+	unordered_set <int> tmpObjectListSector = g_ObjectListSector[row][col].m_sectionlist;
+	g_ObjectListSector[row][col].m_lock.unlock();
+
+
+	int trol = row + 1;
+	int tcol = col;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x + 5) < WORLD_WIDTH)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row;
+	tcol = col + 1;
+	if ((players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row;
+	tcol = col - 1;
+	if ((players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row + 1;
+	tcol = col + 1;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row + 1;
+	tcol = col - 1;
+	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col + 1;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y + 5) < WORLD_HEIGHT)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+
+	trol = row - 1;
+	tcol = col - 1;
+	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
+		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y - 5) > 0)
+	{
+		g_ObjectListSector[trol][tcol].m_lock.lock();
+		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
+		g_ObjectListSector[trol][tcol].m_lock.unlock();
+		tmpObjectListSector.merge(tmpObjectListSector2);
+	}
+	return tmpObjectListSector;
+}
+
 int add_event(int id, OP_TYPE ev, int delay_ms)
 {
 	using namespace chrono;
@@ -330,11 +468,8 @@ void send_add_object(int c_id, int p_id)
 	packet.LEVEL = players[p_id].m_level;
 	packet.EXP = players[p_id].m_exp;
 	packet.HP = players[p_id].m_hp;
+	packet.obj_class = players[p_id].m_obj_class;
 	strcpy_s(packet.name, players[p_id].m_name);
-	if (true == is_npc(p_id)) 
-		packet.obj_class = 1;
-	else 
-		packet.obj_class = 0;
 	send_packet(c_id, &packet);
 }
 
@@ -378,6 +513,54 @@ void send_pc_logout(int c_id, int p_id)
 	send_packet(c_id, &packet);
 }
 
+void send_party_invite(int c_id, int p_id)
+{
+	sc_packet_party_invite packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_PARTY_INVITE;
+	send_packet(c_id, &packet);
+}
+
+void send_party_join(int c_id, int p_id)
+{
+	sc_packet_party_join packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_PARTY_JOIN;
+	send_packet(c_id, &packet);
+}
+
+void send_party_leave(int c_id, int p_id)
+{
+	sc_packet_party_leave packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_PARTY_LEAVE;
+	send_packet(c_id, &packet);
+}
+
+void player_give_party_stat_info(int p_id, unordered_set<int> pl)
+{
+	for (auto& p : pl)
+		send_stat_change(p, p_id);
+}
+
+void player_give_exp(int p_id, int monster_level)
+{
+	players[p_id].m_lock.lock();
+	players[p_id].m_exp += monster_level * monster_level * 2;
+	if (players[p_id].m_exp >= players[p_id].m_level * 200) {
+		players[p_id].m_exp = 0;
+		players[p_id].m_level += 1;
+		players[p_id].m_lock.unlock();
+	}
+	else
+	{
+		players[p_id].m_lock.unlock();
+	}
+}
+
 void player_move(int p_id, char dir)
 {
 	short x = players[p_id].m_x;
@@ -390,123 +573,8 @@ void player_move(int p_id, char dir)
 	}
 	if (players[p_id].m_x == x && players[p_id].m_y == y)
 		return;
-
-	players[p_id].m_vl.lock();
-	unordered_set <int> old_vl = players[p_id].m_viewlist;
-	players[p_id].m_vl.unlock();
-
-	// 섹터 영역 구하기
-	int row = players[p_id].m_x / (VIEW_RADIUS * 2);
-	int col = players[p_id].m_y / (VIEW_RADIUS * 2);
-
-	players[p_id].m_x = x;
-	players[p_id].m_y = y;
-
-	// 움직여서 섹터 영역이 바뀜
-	if (row != players[p_id].m_x / (VIEW_RADIUS * 2) || col != players[p_id].m_y / (VIEW_RADIUS * 2))
-	{
-		// 전에 있던 섹터 영역 플레이어 삭제
-		g_ObjectListSector[row][col].m_lock.lock();
-		g_ObjectListSector[row][col].m_sectionlist.erase(p_id);
-		g_ObjectListSector[row][col].m_lock.unlock();
-
-		row = players[p_id].m_x / (VIEW_RADIUS * 2);
-		col = players[p_id].m_y / (VIEW_RADIUS * 2);
-
-		// 새로 들어온 섹터 영역 플레이어 추가
-		g_ObjectListSector[row][col].m_lock.lock();
-		g_ObjectListSector[row][col].m_sectionlist.insert(p_id);
-		g_ObjectListSector[row][col].m_lock.unlock();
-	}
-
-	g_ObjectListSector[row][col].m_lock.lock();
-	unordered_set <int> tmpObjectListSector = g_ObjectListSector[row][col].m_sectionlist;
-	g_ObjectListSector[row][col].m_lock.unlock();
-
-
-	int trol = row + 1;
-	int tcol = col;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x + 5) < WORLD_WIDTH)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row;
-	tcol = col + 1;
-	if ((players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row;
-	tcol = col - 1;
-	if ((players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row + 1;
-	tcol = col + 1;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row + 1;
-	tcol = col - 1;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col + 1;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col - 1;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
+	unordered_set <int> old_vl;
+	unordered_set <int> tmpObjectListSector = get_sector(p_id, old_vl, x, y);
 
 	unordered_set <int> new_vl;
 	for (auto& cl : tmpObjectListSector) {
@@ -525,11 +593,13 @@ void player_move(int p_id, char dir)
 	send_move_packet(p_id, p_id);
 	
 	for (auto npc : new_vl) {
-		//if (false == is_npc(npc)) continue;
-		//EX_OVER* ex_over = new EX_OVER;
-		//ex_over->m_op = OP_PLAYER_MOVE;
-		//ex_over->m_traget_id = p_id;
-		//PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
+		if (players[npc].m_obj_class < 2) continue;
+		EX_OVER* ex_over = new EX_OVER;
+		ex_over->m_op = OP_PLAYER_MOVE;
+		ex_over->m_traget_id = p_id;
+		PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
+		if(players[npc].m_obj_class == 3)
+			do_random_move_npc(npc);
 	}
 
 	for (auto pl : new_vl) {
@@ -594,122 +664,8 @@ void player_teleport(int p_id, short x, short y)
 	if (players[p_id].m_x == x && players[p_id].m_y == y)
 		return;
 
-	players[p_id].m_vl.lock();
-	unordered_set <int> old_vl = players[p_id].m_viewlist;
-	players[p_id].m_vl.unlock();
-
-	// 섹터 영역 구하기
-	int row = players[p_id].m_x / (VIEW_RADIUS * 2);
-	int col = players[p_id].m_y / (VIEW_RADIUS * 2);
-
-	players[p_id].m_x = x;
-	players[p_id].m_y = y;
-
-	// 움직여서 섹터 영역이 바뀜
-	if (row != players[p_id].m_x / (VIEW_RADIUS * 2) || col != players[p_id].m_y / (VIEW_RADIUS * 2))
-	{
-		// 전에 있던 섹터 영역 플레이어 삭제
-		g_ObjectListSector[row][col].m_lock.lock();
-		g_ObjectListSector[row][col].m_sectionlist.erase(p_id);
-		g_ObjectListSector[row][col].m_lock.unlock();
-
-		row = players[p_id].m_x / (VIEW_RADIUS * 2);
-		col = players[p_id].m_y / (VIEW_RADIUS * 2);
-
-		// 새로 들어온 섹터 영역 플레이어 추가
-		g_ObjectListSector[row][col].m_lock.lock();
-		g_ObjectListSector[row][col].m_sectionlist.insert(p_id);
-		g_ObjectListSector[row][col].m_lock.unlock();
-	}
-
-	g_ObjectListSector[row][col].m_lock.lock();
-	unordered_set <int> tmpObjectListSector = g_ObjectListSector[row][col].m_sectionlist;
-	g_ObjectListSector[row][col].m_lock.unlock();
-
-
-	int trol = row + 1;
-	int tcol = col;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x + 5) < WORLD_WIDTH)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_x - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row;
-	tcol = col + 1;
-	if ((players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row;
-	tcol = col - 1;
-	if ((players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row + 1;
-	tcol = col + 1;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row + 1;
-	tcol = col - 1;
-	if ((players[p_id].m_x + 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x + 5) < WORLD_WIDTH && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col + 1;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y + 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y + 5) < WORLD_HEIGHT)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
-
-	trol = row - 1;
-	tcol = col - 1;
-	if ((players[p_id].m_x - 5) / (VIEW_RADIUS * 2) != row && (players[p_id].m_y - 5) / (VIEW_RADIUS * 2) != col
-		&& (players[p_id].m_x - 5) > 0 && (players[p_id].m_y - 5) > 0)
-	{
-		g_ObjectListSector[trol][tcol].m_lock.lock();
-		unordered_set <int> tmpObjectListSector2 = g_ObjectListSector[trol][tcol].m_sectionlist;
-		g_ObjectListSector[trol][tcol].m_lock.unlock();
-		tmpObjectListSector.merge(tmpObjectListSector2);
-	}
+	unordered_set <int> old_vl;
+	unordered_set <int> tmpObjectListSector = get_sector(p_id, old_vl, x, y);
 
 	unordered_set <int> new_vl;
 	for (auto& cl : tmpObjectListSector) {
@@ -728,11 +684,11 @@ void player_teleport(int p_id, short x, short y)
 	send_move_packet(p_id, p_id);
 
 	for (auto npc : new_vl) {
-		//if (false == is_npc(npc)) continue;
-		//EX_OVER* ex_over = new EX_OVER;
-		//ex_over->m_op = OP_PLAYER_MOVE;
-		//ex_over->m_traget_id = p_id;
-		//PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
+		if (players[npc].m_obj_class != 2) continue;
+		EX_OVER* ex_over = new EX_OVER;
+		ex_over->m_op = OP_PLAYER_MOVE;
+		ex_over->m_traget_id = p_id;
+		PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
 	}
 
 	for (auto pl : new_vl) {
@@ -799,7 +755,7 @@ void player_attack(int p_id)
 	players[p_id].m_lock.unlock();
 
 	for (auto& npc : players[p_id].m_viewlist) {
-		if (is_npc(npc) == false) continue;
+		if (players[npc].m_obj_class != 2) continue;
 		players[npc].m_lock.lock();
 		short nx = players[npc].m_x;
 		short ny = players[npc].m_y;
@@ -810,12 +766,32 @@ void player_attack(int p_id)
 			|| (nx == px && ny == py + 1)
 			|| (nx == px && ny == py - 1))
 		{
+			string txt = "[전투]" + string(players[npc].m_name) + "에게 데미지 30을 주었다!";
+			send_chat(p_id, p_id, txt.c_str());
+
 			players[npc].m_lock.lock();
 			players[npc].m_hp -= 30;
 			if (players[npc].m_hp <= 0) {
 				players[npc].m_state = STATE_FREE;
+				int monster_level = players[npc].m_level;
 				players[npc].m_lock.unlock();
-				add_event(npc, OP_NPC_RESPAWN, 1000);
+				string txt = "[전투]" + string(players[npc].m_name) + "를 쓰러뜨렸다!";
+				send_chat(p_id, p_id, txt.c_str());
+				add_event(npc, OP_NPC_RESPAWN, 30000);
+
+				players[p_id].m_pl.lock();
+				unordered_set<int> pl = players[p_id].m_partylist;
+				players[p_id].m_pl.unlock();
+
+				player_give_exp(p_id, monster_level);
+				player_give_party_stat_info(p_id, pl);
+
+				for (auto& p : pl)
+				{
+					player_give_exp(p, monster_level);
+					player_give_party_stat_info(p, pl);
+				}
+
 			}
 			else {
 				players[npc].m_lock.unlock();
@@ -823,14 +799,20 @@ void player_attack(int p_id)
 			send_stat_change(p_id, npc);
 		}
 	}
-
-
-	players[p_id].m_exp += 50;
-	if (players[p_id].m_exp >= players[p_id].m_level * 200) {
-		players[p_id].m_exp = 0;
-		players[p_id].m_level += 1;
-	}
 	send_stat_change(p_id, p_id);
+}
+
+void party_leave(int p_id)
+{
+	players[p_id].m_pl.lock();
+	unordered_set <int> pl = players[p_id].m_partylist;
+	players[p_id].m_pl.unlock();
+	for (auto& p : pl) {
+		players[p].m_pl.lock();
+		players[p].m_partylist.erase(p_id);
+		players[p].m_pl.unlock();
+		send_party_leave(p, p_id);
+	}
 }
 
 void process_packet(int p_id, unsigned char* packet)
@@ -1026,7 +1008,19 @@ void process_packet(int p_id, unsigned char* packet)
 			if (x[0] == "/party") {
 				if (x.size() == 2)
 				{
-					cout << x[1] << "님과 파티를 맺었습니다!" << endl;
+					for (int i = 0; i < NPC_ID_START; ++i)
+					{
+						players[i].m_lock.lock();
+						string s(players[i].m_name);
+						players[i].m_lock.unlock();
+						if (s == x[1])
+						{
+							send_party_invite(i, p_id);
+							break;
+						}
+					}
+					//string txt = "[파티]" + x[1] + "님은 없습니다.";
+					//send_chat(p_id, p_id, txt.c_str());
 				}else {
 					cout << "/party [플레이어 이름]" << endl;
 				}
@@ -1057,6 +1051,54 @@ void process_packet(int p_id, unsigned char* packet)
 		cs_packet_move* move_packet = reinterpret_cast<cs_packet_move*>(packet);
 		//players[p_id].last_move_time = move_packet->move_time;
 		player_attack(p_id);
+		break;
+	}
+	case CS_PARTY_INVITE: {
+		cs_packet_party_invite* my_packet = reinterpret_cast<cs_packet_party_invite*>(packet);
+		send_party_invite(my_packet->id, p_id);
+		break;
+	}
+	case CS_PARTY_ACCEPT: {
+		cs_packet_party_accept* my_packet = reinterpret_cast<cs_packet_party_accept*>(packet);
+		int invite = my_packet->id;
+		int accept = p_id;
+		players[accept].m_pl.lock();
+		auto plist = players[accept].m_partylist;
+		players[accept].m_pl.unlock();
+
+		players[invite].m_pl.lock();
+		auto plist2 = players[invite].m_partylist;
+		players[invite].m_pl.unlock();
+
+		for (const auto& p : plist2) {
+			plist.insert(p);
+			send_party_join(accept, p);
+			send_add_object(accept, p);
+			send_party_join(p, accept);
+			send_add_object(p, accept);
+			players[p].m_pl.lock();
+			players[p].m_partylist.insert(accept);
+			players[p].m_pl.unlock();
+		}
+		plist.insert(invite);
+		send_party_join(accept, invite);
+		send_add_object(accept, invite);
+
+		players[accept].m_pl.lock();
+		players[accept].m_partylist = plist;
+		players[accept].m_pl.unlock();
+
+		players[invite].m_pl.lock();
+		players[invite].m_partylist.insert(accept);
+		players[invite].m_pl.unlock();
+		send_party_join(invite, accept);
+		send_add_object(invite, accept);
+		break;
+	}
+	case CS_PARTY_DENY: {
+		cs_packet_party_deny* my_packet = reinterpret_cast<cs_packet_party_deny*>(packet);
+		string txt = "[파티]" + string(players[my_packet->id].m_name) + "님이 파티 신청을 거절하였습니다.";
+		send_chat(p_id, p_id, txt.c_str());
 		break;
 	}
 	default :
@@ -1132,6 +1174,7 @@ void disconnect(int p_id)
 		send_pc_logout(players[cl].m_id, p_id);
 		players[cl].m_lock.unlock();
 	}
+	party_leave(p_id);
 }
 
 void worker()
@@ -1205,7 +1248,7 @@ void worker()
 		break;
 		case OP_RANDOM_MOVE:
 		{
-			////
+			do_random_move_npc(key);
 			delete ex_over;
 		}
 		break;
@@ -1228,14 +1271,8 @@ void worker()
 
 void do_random_move_npc(int id)
 {
-
-	unordered_set <int> old_vl;
-	for (int p = 0; p < NPC_ID_START; ++p) {
-		if (STATE_INGAME != players[p].m_state) continue;
-		if (true == can_see(id, p))
-			old_vl.insert(p);
-	}
-
+	if (players[id].moving)
+		return;
 	int x = players[id].m_x;
 	int y = players[id].m_y;
 	switch (rand() % 4) {
@@ -1247,8 +1284,14 @@ void do_random_move_npc(int id)
 	players[id].m_x = x;
 	players[id].m_y = y;
 
+	unordered_set <int> old_vl;
+	unordered_set <int> tmpObjectListSector = get_sector(id, old_vl, x, y);
+
 	unordered_set <int> new_vl;
-	for (int p = 0; p < NPC_ID_START; ++p) {
+
+	bool in_player = false;
+	for (auto& p : tmpObjectListSector) {
+		if (is_npc(p) == true) continue;
 		if (STATE_INGAME != players[p].m_state) continue;
 		if (true == can_see(id, p))
 			new_vl.insert(p);
@@ -1263,6 +1306,7 @@ void do_random_move_npc(int id)
 		}
 		else {
 			send_move_packet(pl, id);
+			in_player = true;
 		}
 	}
 	for (auto pl : new_vl) {
@@ -1271,7 +1315,85 @@ void do_random_move_npc(int id)
 			players[pl].m_viewlist.insert(id);
 			players[pl].m_vl.unlock();
 			send_add_object(pl, id);
+			in_player = true;
 		}
+	}
+
+	for (auto p : new_vl) {
+		if (is_npc(p)) continue;
+		EX_OVER* ex_over = new EX_OVER;
+		ex_over->m_op = OP_PLAYER_MOVE;
+		ex_over->m_traget_id = p;
+		PostQueuedCompletionStatus(h_iocp, 1, id, &ex_over->m_over);
+	}
+
+	if (in_player && players[id].moving == false) {
+		add_event(id, OP_RANDOM_MOVE, 1000);
+		players[id].moving = true;
+	}
+}
+
+void do_player_move_npc(int id)
+{
+	if (players[id].moving)
+		return;
+	int x = players[id].m_x;
+	int y = players[id].m_y;
+	switch (rand() % 4) {
+	case 0: if (x > 0) x--; break;
+	case 1: if (x < (WORLD_WIDTH - 1)) x++; break;
+	case 2: if (y > 0) y--; break;
+	case 3: if (y < (WORLD_HEIGHT - 1)) y++; break;
+	}
+	players[id].m_x = x;
+	players[id].m_y = y;
+
+	unordered_set <int> old_vl;
+	unordered_set <int> tmpObjectListSector = get_sector(id, old_vl, x, y);
+
+	unordered_set <int> new_vl;
+
+	bool in_player = false;
+	for (auto& p : tmpObjectListSector) {
+		if (is_npc(p) == true) continue;
+		if (STATE_INGAME != players[p].m_state) continue;
+		if (true == can_see(id, p))
+			new_vl.insert(p);
+	}
+
+	for (auto pl : old_vl) {
+		if (0 == new_vl.count(pl)) { // 시야에서 벗어남
+			players[pl].m_vl.lock();
+			players[pl].m_viewlist.erase(id);
+			players[pl].m_vl.unlock();
+			send_pc_logout(pl, id);
+		}
+		else {
+			send_move_packet(pl, id);
+			in_player = true;
+		}
+	}
+	for (auto pl : new_vl) {
+		if (0 == old_vl.count(pl)) {
+			players[pl].m_vl.lock();
+			players[pl].m_viewlist.insert(id);
+			players[pl].m_vl.unlock();
+			send_add_object(pl, id);
+			in_player = true;
+		}
+	}
+
+	for (auto p : new_vl) {
+		if (is_npc(p)) continue;
+		EX_OVER* ex_over = new EX_OVER;
+		ex_over->m_op = OP_PLAYER_MOVE;
+		ex_over->m_traget_id = p;
+		PostQueuedCompletionStatus(h_iocp, 1, id, &ex_over->m_over);
+	}
+
+	if (in_player && players[id].moving == false) {
+		add_event(id, OP_RANDOM_MOVE, 1000);
+		players[id].moving = true;
 	}
 }
 
@@ -1298,6 +1420,7 @@ void do_timer()
 					EX_OVER* ex_over = new EX_OVER;
 					ex_over->m_op = OP_RANDOM_MOVE;
 					PostQueuedCompletionStatus(h_iocp, 1, ev.object_id, &ex_over->m_over);
+					players[ev.object_id].moving = false;
 					//do_random_move_npc(ev.object_id);
 					//add_event(ev.object_id, OP_RANDOM_MOVE, 1000);
 					break;
@@ -1347,6 +1470,36 @@ int API_send_message(lua_State* L)
 	return 0;
 }
 
+int API_damage_player(lua_State* L)
+{
+	int obj_id = lua_tonumber(L, -2);
+	int p_id = lua_tonumber(L, -1);
+	lua_pop(L, 3);
+	players[p_id].m_lock.lock();
+	players[p_id].m_hp -= 10;
+	if (players[p_id].m_hp <= 0) {
+		players[p_id].m_exp /= 2;
+		players[p_id].m_hp = 100;
+		players[p_id].m_lock.unlock();
+		player_teleport(p_id, 0, 0);
+	} else 
+		players[p_id].m_lock.unlock();
+	for (auto& p : players[p_id].m_viewlist) {
+		send_stat_change(p, p_id);
+	}
+	send_stat_change(p_id, p_id);
+
+	players[p_id].m_pl.lock();
+	unordered_set<int> pl = players[p_id].m_partylist;
+	players[p_id].m_pl.unlock();
+
+	player_give_party_stat_info(p_id, pl);
+
+	string txt = "[전투]" + string(players[obj_id].m_name) + "에게 데미지 30을 받았다!";
+	send_chat(p_id, p_id, txt.c_str());
+	return 0;
+}
+
 int main()
 {
 	wcout.imbue(locale("korean"));
@@ -1357,27 +1510,88 @@ int main()
 		pl.m_id = i;
 		pl.m_state = STATE_FREE;
 		pl.last_move_time = 0;
+		pl.m_obj_class = 0;
 		// pl.m_viewlist.clear();
 		
 		if (true == is_npc(i)) {
-			//strcpy_s(pl.m_name, to_string(i).c_str());
+			
 			pl.m_x = rand() % WORLD_WIDTH;
 			pl.m_y = rand() % WORLD_HEIGHT;
-			pl.m_hp = 100;
-			pl.m_state = STATE_INGAME;
-			//add_event(i, OP_RANDOM_MOVE, 1000);
-			pl.L = luaL_newstate();
-			luaL_openlibs(pl.L);
-			luaL_loadfile(pl.L, "monster_ai.lua");
-			lua_pcall(pl.L, 0, 0, 0);
+			pl.m_obj_class = rand() % 3 + 1;
+			switch (pl.m_obj_class)
+			{
+				case 1: {
+					pl.m_hp = 100;
+					pl.m_level = 1;
+					pl.m_state = STATE_INGAME;
+					string s = "시민";
+					strcpy_s(pl.m_name, s.c_str());
+					break;
+				}
+				case 2: {
+					pl.m_hp = 100;
+					pl.m_level = 1;
+					pl.m_state = STATE_INGAME;
+					string s = "고블린";
+					strcpy_s(pl.m_name, s.c_str());
+					pl.L = luaL_newstate();
+					luaL_openlibs(pl.L);
+					luaL_loadfile(pl.L, "monster_ai.lua");
+					lua_pcall(pl.L, 0, 0, 0);
 
-			lua_getglobal(pl.L, "set_o_id");
-			lua_pushnumber(pl.L, i);
-			lua_pcall(pl.L, 1, 0, 0);
+					lua_getglobal(pl.L, "set_o_id");
+					lua_pushnumber(pl.L, i);
+					lua_pcall(pl.L, 1, 0, 0);
 
-			lua_register(pl.L, "API_send_message", API_send_message);
-			lua_register(pl.L, "API_get_x", API_get_x);
-			lua_register(pl.L, "API_get_y", API_get_y);
+					lua_register(pl.L, "API_send_message", API_send_message);
+					lua_register(pl.L, "API_damage_player", API_damage_player);
+					lua_register(pl.L, "API_get_x", API_get_x);
+					lua_register(pl.L, "API_get_y", API_get_y);
+					break;
+				}
+				case 3: {
+					pl.m_hp = 100;
+					pl.m_level = 2;
+					pl.m_state = STATE_INGAME;
+					string s = "도깨비";
+					strcpy_s(pl.m_name, s.c_str());
+					pl.L = luaL_newstate();
+					luaL_openlibs(pl.L);
+					luaL_loadfile(pl.L, "monster_ai.lua");
+					lua_pcall(pl.L, 0, 0, 0);
+
+					lua_getglobal(pl.L, "set_o_id");
+					lua_pushnumber(pl.L, i);
+					lua_pcall(pl.L, 1, 0, 0);
+
+					lua_register(pl.L, "API_damage_player", API_damage_player);
+					lua_register(pl.L, "API_get_x", API_get_x);
+					lua_register(pl.L, "API_get_y", API_get_y);
+					break;
+				}
+				case 4: {
+					pl.m_hp = 100;
+					pl.m_level = 3;
+					pl.m_state = STATE_INGAME;
+					string s = "보스";
+					strcpy_s(pl.m_name, s.c_str());
+					pl.L = luaL_newstate();
+					luaL_openlibs(pl.L);
+					luaL_loadfile(pl.L, "monster_ai.lua");
+					lua_pcall(pl.L, 0, 0, 0);
+
+					lua_getglobal(pl.L, "set_o_id");
+					lua_pushnumber(pl.L, i);
+					lua_pcall(pl.L, 1, 0, 0);
+
+					lua_register(pl.L, "API_damage_player", API_damage_player);
+					lua_register(pl.L, "API_get_x", API_get_x);
+					lua_register(pl.L, "API_get_y", API_get_y);
+					break;
+				}
+				default:
+					break;
+			}
 
 			// 섹터 영역 구하기
 			int row = pl.m_x / (VIEW_RADIUS * 2);
