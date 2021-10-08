@@ -39,10 +39,11 @@ WSAOVERLAPPED s_over;
 typedef struct PlayerData
 {
 	short x = 3, y = 3;
-	int hp, level, exp;
+	int hp, mp, level, exp;
 	char state = STATE_FREE;
 	char o_type = 0;
 	char name[MAX_ID_LEN];
+	ITEM item;
 };
 PlayerData Players[MAX_USER];
 
@@ -185,6 +186,33 @@ void send_party_deny(int p_id)
 	packet.size = sizeof(packet);
 	packet.type = CS_PARTY_DENY;
 	packet.id = p_id;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_item_use(int item)
+{
+	cs_packet_item_use packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_ITEM_USE;
+	packet.id = item;
+
+	WSABUF s_wsabuf[1];
+	s_wsabuf[0].buf = (char*)&packet;
+	s_wsabuf[0].len = sizeof(packet);
+	DWORD sent_bytes;
+	WSASend(s_socket, s_wsabuf, 1, &sent_bytes, 0, 0, 0);
+}
+
+void send_skil_use()
+{
+	cs_packet_skil_use packet;
+	packet.size = sizeof(packet);
+	packet.type = CS_SKIL_USE;
 
 	WSABUF s_wsabuf[1];
 	s_wsabuf[0].buf = (char*)&packet;
@@ -354,6 +382,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 	PAINTSTRUCT ps;
 	static CImage background; //보드맵
 	static CImage chess; //플레이어
+	static CImage character;
+
+	static CImage reaper;
+	static CImage ghost;
+	static CImage vampire;
+
+	static CImage player_image;
+	static CImage player_image2;
 
 	static RECT rectView; //클라이언트 창 크기
 	static HDC hDC,memDC;
@@ -362,6 +398,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 	static float mx, my; //마우스 좌표
 
 	static bool chatmode = false;
+	static bool inventorymode = false;
 	static string chatstr = "";
 
 	switch (iMessage) {
@@ -372,8 +409,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 
 		dx = (float)rectView.right / BOARD_SIZEX, dy = (float)rectView.bottom / BOARD_SIZEY;
 
-		background.Load("img\\chessboard.jpg");
+		//background.Load("img\\chessboard.jpg");
+		background.Load("img\\map.png");
 		chess.Load("img\\chess.png");
+		character.Load("img\\character.png");
+		reaper.Load("img\\reaper.png");
+		ghost.Load("img\\ghost.png");
+		vampire.Load("img\\vampire.png");
+		player_image.Load("img\\player.png");
+		player_image2.Load("img\\player2.png");
 		return 0;
 	}
 	case WM_PAINT:
@@ -386,15 +430,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 		{
 			Rectangle(memDC, 0, 0, rectView.right,rectView.bottom);
 			//background.Draw(memDC, 0, 0, rectView.right, rectView.bottom);
-			for (int x = 0; x < 250; x++)
+			//for (int x = 0; x < 250; x++)
+			//{
+			//	for (int y = 0; y < 250; y++)
+			//	{
+			//		background.Draw(memDC
+			//			, rectView.right / 2 * x - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
+			//			, rectView.bottom / 2 * y - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
+			//			, rectView.right / 2
+			//			, rectView.bottom / 2);
+			//	}
+			//}
+			for (int x = 0; x < 10; x++)
 			{
-				for (int y = 0; y < 250; y++)
+				for (int y = 0; y < 10; y++)
 				{
 					background.Draw(memDC
-						, rectView.right / 2 * x - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
-						, rectView.bottom / 2 * y - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
-						, rectView.right / 2
-						, rectView.bottom / 2);
+						, 200 * dx * x - myPlayer.x * dx + rectView.right / 2
+						, 200 * dy * y - myPlayer.y * dy + rectView.bottom / 2
+						, 200 * dx
+						, 200 * dy);
 				}
 			}
 			//chess.Draw(memDC, cx * dx, cy * dy, dx, dy);
@@ -403,61 +458,69 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			{
 				if (Players[i].state == STATE_INGAME)
 				{
-					if (Players[i].o_type == 0)
+					if (Players[i].o_type == OB_PLAYER)
 					{
-						chess.Draw(memDC
+						player_image2.Draw(memDC
 							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 							, dx , dy
-							, 132 * 3, 132
-							, 132, 132);
+							, 78, 0
+							, 78, 108);
 						//chess2.Draw(memDC
 						//	, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 						//	, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 						//	, dx, dy);
 					}
-					else if (Players[i].o_type == 1) {
-						chess.Draw(memDC
+					else if (Players[i].o_type == OB_VILIGER) {
+						character.Draw(memDC
 							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 							, dx , dy
-							, 0, 132
-							, 132, 132);
+							, 134*2, 198*3
+							, 134, 198);
 					}
-					else if (Players[i].o_type == 2) {
-						chess.Draw(memDC
+					else if (Players[i].o_type == OB_GQUESTOR || Players[i].o_type == OB_CQUESTOR) {
+						character.Draw(memDC
 							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 							, dx, dy
-							, 0, 132
-							, 132, 132);
+							, 134 * 3, 198 * 2
+							, 134, 198);
 					}
-					else if (Players[i].o_type == 3) {
-						chess.Draw(memDC
+					else if (Players[i].o_type == OB_GOBBLINE) {
+						ghost.Draw(memDC
 							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 							, dx, dy
-							, 0, 132
-							, 132, 132);
+							, 78, 0
+							, 78, 108);
 					}
-					else if (Players[i].o_type == 4) {
-						chess.Draw(memDC
+					else if (Players[i].o_type == OB_ONI) {
+						reaper.Draw(memDC
 							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
 							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
 							, dx, dy
-							, 0, 132
-							, 132, 132);
+							, 96, 0
+							, 96, 108);
+					}
+					else if (Players[i].o_type == OB_GHOST) {
+						vampire.Draw(memDC
+							, Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx
+							, Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy
+							, dx, dy
+							, 26, 36 * 4
+							, 26, 36);
 					}
 				}
 			}
 
 			if (myPlayer.state == STATE_INGAME) {
-				chess.Draw(memDC
+				player_image.Draw(memDC
 					, BOARD_SIZEX / 2 * dx
 					, BOARD_SIZEY / 2 * dy
 					, dx , dy
-					, 132 * 3, 0
-					, 132, 132);
+					, 78, 0
+					, 78, 108);
 
 				//chess.Draw(memDC
 				//	, BOARD_SIZEX / 2 * dx
@@ -471,7 +534,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			{
 				if (Players[i].state == STATE_INGAME)
 				{
-					if (Players[i].o_type == 0)
+					if (Players[i].o_type == OB_PLAYER)
 					{
 						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
 							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
@@ -479,14 +542,44 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 							,int(Players[i].y* dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy)};
 						str = "Lv." + to_string(Players[i].level) + " " + string(Players[i].name);
 						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
-					} else if (Players[i].o_type == 1) {
+					} else if (Players[i].o_type == OB_VILIGER) {
 						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
 							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
 							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
 							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
 						str = string(Players[i].name);
 						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
-					} else if (Players[i].o_type >= 2) {
+					}
+					else if (Players[i].o_type == OB_GQUESTOR) {
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
+						str = string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 40)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20) };
+						str = "   !(퀘스트)";
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					}
+					else if (Players[i].o_type == OB_CQUESTOR) {
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy) };
+						str = string(Players[i].name);
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 40)
+							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
+							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20) };
+						str = "   ?(퀘스트)";
+						DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+					} else if (Players[i].o_type >= OB_MONSTER) {
 						rt = { int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx)
 							,int(Players[i].y * dy - myPlayer.y * dy + BOARD_SIZEY / 2 * dy - 20)
 							,int(Players[i].x * dx - myPlayer.x * dx + BOARD_SIZEX / 2 * dx + 100)
@@ -516,6 +609,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 
 			rt = { 510,50,600,150 };
 			str = "HP:" + to_string(myPlayer.hp);
+			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+			rt = { 510,70,600,150 };
+			str = "MP:" + to_string(myPlayer.mp);
 			DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
 
 
@@ -549,6 +646,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 				}
 			}
 
+			// 인벤토리
+			if (inventorymode)
+			{
+				rt = { 250,200,500,220 };
+				str = "HP포션: " + to_string(myPlayer.item.hp_postion);
+				DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+				rt = { 250,220,500,240 };
+				str = "MP포션: " + to_string(myPlayer.item.mp_postion);
+				DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+				rt = { 250,240,500,260 };
+				str = "유령의 천: " + to_string(myPlayer.item.gobline_horn);
+				DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+
+				rt = { 250,260,500,280 };
+				str = "사신 낫: " + to_string(myPlayer.item.oni_bet);
+				DrawText(memDC, str.c_str(), -1, &rt, DT_VCENTER | DT_WORDBREAK);
+			}
+
 			img.Draw(hDC, 0, 0);
 			img.ReleaseDC();
 		}
@@ -579,6 +696,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM IParam)
 			}
 			else if (wParam == 'a' || wParam == 'A') {
 				send_attack_packet();
+			}
+			else if (wParam == 'i' || wParam == 'I') {
+				if (inventorymode)
+					inventorymode = false;
+				else
+					inventorymode = true;
+			}
+			else if (wParam == 'q' || wParam == 'Q') {
+				send_item_use(0);
+			}
+			else if (wParam == 'w' || wParam == 'W') {
+				send_item_use(1);
+			}
+			else if (wParam == 's' || wParam == 'S') {
+				send_skil_use();
 			}
 		} else {
 			if (wParam == VK_RETURN) {
@@ -669,6 +801,7 @@ void ProcessPacket(char* ptr, HWND hWnd)
 		myPlayer.level = packet->LEVEL;
 		myPlayer.exp = packet->EXP;
 		myPlayer.hp = packet->HP;
+		myPlayer.mp = packet->MP;
 		myPlayer.state = STATE_INGAME;
 	}
 	break;
@@ -744,11 +877,13 @@ void ProcessPacket(char* ptr, HWND hWnd)
 			myPlayer.level = my_packet->LEVEL;
 			myPlayer.exp = my_packet->EXP;
 			myPlayer.hp = my_packet->HP;
+			myPlayer.mp = my_packet->MP;
 
 		} else {
 			Players[p_id].level = my_packet->LEVEL;
 			Players[p_id].exp = my_packet->EXP;
 			Players[p_id].hp = my_packet->HP;
+			Players[p_id].mp = my_packet->MP;
 			Players[p_id].state = my_packet->STATE;
 		}
 		break;
@@ -770,6 +905,12 @@ void ProcessPacket(char* ptr, HWND hWnd)
 	{
 		sc_packet_party_leave* my_packet = reinterpret_cast<sc_packet_party_leave*>(ptr);
 		partylist.erase(my_packet->id);
+		break;
+	}
+	case SC_ITEM_CHANGE:
+	{
+		sc_packet_item_change* my_packet = reinterpret_cast<sc_packet_item_change*>(ptr);
+		myPlayer.item = my_packet->item;
 		break;
 	}
 	default:

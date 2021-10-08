@@ -26,7 +26,7 @@ using namespace std;
 
 constexpr int NUM_THREADS = 4;
 
-enum OP_TYPE { OP_RECV, OP_SEND, OP_ACCEPT, OP_RANDOM_MOVE, OP_PLAYER_MOVE, OP_NPC_RESPAWN };
+enum OP_TYPE { OP_RECV, OP_SEND, OP_ACCEPT, OP_RANDOM_MOVE, OP_PLAYER_MOVE, OP_NPC_RESPAWN, OP_PLAYER_SAVE, OP_PLAYER_HEALING, OP_PLAYER_SKIL_COOL };
 enum S_STATE {STATE_FREE, STATE_CONNECTED, STATE_INGAME};
 struct EX_OVER {
 	WSAOVERLAPPED	m_over;
@@ -35,14 +35,6 @@ struct EX_OVER {
 	OP_TYPE			m_op;
 	SOCKET			m_csocket;
 	int				m_traget_id;
-};
-
-struct ITEM {
-	char hp_postion;
-	char powerup;
-	char gobline_horn;
-	char oni_bet;
-
 };
 
 struct SESSION
@@ -56,7 +48,7 @@ struct SESSION
 	mutex	m_lock;
 	char	m_name[MAX_ID_LEN];
 	short	m_x, m_y;
-	int		m_hp, m_level, m_exp;
+	int		m_hp, m_mp, m_level, m_exp;
 	int		last_move_time;
 	int		m_obj_class;
 
@@ -69,6 +61,12 @@ struct SESSION
 
 	unordered_set <int> m_partylist;
 	mutex	m_pl;
+
+	ITEM	m_item;
+	mutex	m_il;
+
+	char coolTime;
+	mutex	m_skil_lock;
 };
 
 struct timer_event {
@@ -167,7 +165,8 @@ void save_player(int p_id) {
 						+ L", " + to_wstring(players[p_id].m_y)
 						+ L", " + to_wstring(players[p_id].m_level)
 						+ L", " + to_wstring(players[p_id].m_exp)
-						+ L", " + to_wstring(players[p_id].m_hp);
+						+ L", " + to_wstring(players[p_id].m_hp)
+						+ L", " + to_wstring(players[p_id].m_mp);
 					retcode = SQLExecDirect(hstmt, (SQLWCHAR*)str.c_str(), SQL_NTS);
 					if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 						cout << "[시스템]" << players[p_id].m_name << "님의 데이터 저장완료 되었습니다." << endl;
@@ -198,8 +197,8 @@ void load_player(int p_id) {
 	SQLHSTMT hstmt = 0;
 	SQLRETURN retcode;
 	SQLWCHAR szName[15];
-	SQLINTEGER CharX, CharY, CharExp, CharLevel, CharHp;
-	SQLLEN cbName = 0, cbCharX = 0, cbCharY = 0, cbCharExp = 0, cbCharLevel = 0, cbCharHp = 0;
+	SQLINTEGER CharX, CharY, CharExp, CharLevel, CharHp, CharMp;
+	SQLLEN cbName = 0, cbCharX = 0, cbCharY = 0, cbCharExp = 0, cbCharLevel = 0, cbCharHp = 0, cbCharMp = 0;
 
 	// Allocate environment handle  
 	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
@@ -232,6 +231,7 @@ void load_player(int p_id) {
 						retcode = SQLBindCol(hstmt, 3, SQL_C_ULONG, &CharLevel, 10, &cbCharLevel);
 						retcode = SQLBindCol(hstmt, 4, SQL_C_ULONG, &CharExp, 10, &cbCharExp);
 						retcode = SQLBindCol(hstmt, 5, SQL_C_ULONG, &CharHp, 10, &cbCharHp);
+						retcode = SQLBindCol(hstmt, 6, SQL_C_ULONG, &CharMp, 10, &cbCharMp);
 
 						// Fetch and print each row of data. On an error, display a message and exit.  
 						for (int i = 0; ; i++) {
@@ -247,6 +247,7 @@ void load_player(int p_id) {
 								players[p_id].m_level = CharLevel;
 								players[p_id].m_exp = CharExp;
 								players[p_id].m_hp = CharHp;
+								players[p_id].m_mp = CharMp;
 								players[p_id].m_lock.unlock();
 							}
 							else
@@ -417,6 +418,14 @@ bool can_see(int id_a, int id_b)
 		* (players[id_a].m_y - players[id_b].m_y);
 }
 
+bool can_buf(int id_a, int id_b)
+{
+	return 1 >= (players[id_a].m_x - players[id_b].m_x)
+		* (players[id_a].m_x - players[id_b].m_x)
+		+ (players[id_a].m_y - players[id_b].m_y)
+		* (players[id_a].m_y - players[id_b].m_y);
+}
+
 void send_packet(int p_id, void* buf)
 {
 	EX_OVER* s_over = new EX_OVER;
@@ -435,6 +444,7 @@ void send_login_info(int p_id)
 {
 	sc_packet_login_ok packet;
 	packet.HP = players[p_id].m_hp;
+	packet.MP = players[p_id].m_mp;
 	packet.id = p_id;
 	packet.LEVEL = players[p_id].m_level;
 	packet.EXP = players[p_id].m_exp;
@@ -499,6 +509,7 @@ void send_stat_change(int c_id, int p_id)
 	packet.LEVEL = players[p_id].m_level;
 	packet.EXP = players[p_id].m_exp;
 	packet.HP = players[p_id].m_hp;
+	packet.MP = players[p_id].m_mp;
 	packet.STATE = players[p_id].m_state;
 	packet.type = SC_STAT_CHANGE;
 	send_packet(c_id, &packet);
@@ -540,6 +551,15 @@ void send_party_leave(int c_id, int p_id)
 	send_packet(c_id, &packet);
 }
 
+void send_item_change(int c_id, ITEM item)
+{
+	sc_packet_item_change packet;
+	packet.size = sizeof(packet);
+	packet.type = SC_ITEM_CHANGE;
+	packet.item = item;
+	send_packet(c_id, &packet);
+}
+
 void player_give_party_stat_info(int p_id, unordered_set<int> pl)
 {
 	for (auto& p : pl)
@@ -550,6 +570,8 @@ void player_give_exp(int p_id, int monster_level)
 {
 	players[p_id].m_lock.lock();
 	players[p_id].m_exp += monster_level * monster_level * 2;
+	string txt = "[경험치] " + to_string(monster_level * monster_level * 2) + "경험치를 얻었다.";
+	send_chat(p_id, p_id, txt.c_str());
 	if (players[p_id].m_exp >= players[p_id].m_level * 200) {
 		players[p_id].m_exp = 0;
 		players[p_id].m_level += 1;
@@ -593,12 +615,13 @@ void player_move(int p_id, char dir)
 	send_move_packet(p_id, p_id);
 	
 	for (auto npc : new_vl) {
-		if (players[npc].m_obj_class < 2) continue;
+		if (players[npc].m_state != STATE_INGAME) continue;
+		if (players[npc].m_obj_class < OB_MONSTER) continue;
 		EX_OVER* ex_over = new EX_OVER;
 		ex_over->m_op = OP_PLAYER_MOVE;
 		ex_over->m_traget_id = p_id;
 		PostQueuedCompletionStatus(h_iocp, 1, npc, &ex_over->m_over);
-		if(players[npc].m_obj_class == 3)
+		if(players[npc].m_obj_class == OB_ONI)
 			do_random_move_npc(npc);
 	}
 
@@ -684,7 +707,8 @@ void player_teleport(int p_id, short x, short y)
 	send_move_packet(p_id, p_id);
 
 	for (auto npc : new_vl) {
-		if (players[npc].m_obj_class != 2) continue;
+		if (players[npc].m_state != STATE_INGAME) continue;
+		if (players[npc].m_obj_class < OB_MONSTER) continue;
 		EX_OVER* ex_over = new EX_OVER;
 		ex_over->m_op = OP_PLAYER_MOVE;
 		ex_over->m_traget_id = p_id;
@@ -754,8 +778,13 @@ void player_attack(int p_id)
 	short py = players[p_id].m_y;
 	players[p_id].m_lock.unlock();
 
-	for (auto& npc : players[p_id].m_viewlist) {
-		if (players[npc].m_obj_class != 2) continue;
+	players[p_id].m_vl.lock();
+	unordered_set <int> old_vl = players[p_id].m_viewlist;
+	players[p_id].m_vl.unlock();
+
+	for (auto& npc : old_vl) {
+		if (players[npc].m_state != STATE_INGAME) continue;
+		if (players[npc].m_obj_class < OB_MONSTER) continue;
 		players[npc].m_lock.lock();
 		short nx = players[npc].m_x;
 		short ny = players[npc].m_y;
@@ -790,6 +819,59 @@ void player_attack(int p_id)
 				{
 					player_give_exp(p, monster_level);
 					player_give_party_stat_info(p, pl);
+				}
+
+				if (players[npc].m_obj_class == OB_GOBBLINE) {
+					int r = rand() % 2;
+					switch (r)
+					{
+					case 0:
+					{
+						players[p_id].m_il.lock();
+						players[p_id].m_item.gobline_horn += 1;
+						players[p_id].m_il.unlock();
+						send_item_change(p_id, players[p_id].m_item);
+						string txt = "[아이템] 유령의 천을 1개 얻었다.";
+						send_chat(p_id, p_id, txt.c_str());
+						break;
+					}
+					default:
+						break;
+					}
+				} else 	if (players[npc].m_obj_class == OB_ONI) {
+					int r = rand() % 2;
+					switch (r)
+					{
+					case 0:
+					{
+						players[p_id].m_il.lock();
+						players[p_id].m_item.oni_bet += 1;
+						players[p_id].m_il.unlock();
+						send_item_change(p_id, players[p_id].m_item);
+						string txt = "[아이템] 사신 낫을 1개 얻었다.";
+						send_chat(p_id, p_id, txt.c_str());
+						break;
+					}
+					default:
+						break;
+					}
+				} else if (players[npc].m_obj_class == OB_GHOST) {
+					int r = rand() % 2;
+					switch (r)
+					{
+					case 0:
+					{
+						players[p_id].m_il.lock();
+						players[p_id].m_item.hp_postion += 1;
+						players[p_id].m_il.unlock();
+						send_item_change(p_id, players[p_id].m_item);
+						string txt = "[아이템] hp 포션을 1개 얻었다.";
+						send_chat(p_id, p_id, txt.c_str());
+						break;
+					}
+					default:
+						break;
+					}
 				}
 
 			}
@@ -854,17 +936,35 @@ void process_packet(int p_id, unsigned char* packet)
 		players[p_id].m_x = rand() % WORLD_WIDTH;
 		players[p_id].m_y = rand() % WORLD_HEIGHT;
 		players[p_id].m_hp = 100;
+		players[p_id].m_mp = 100;
 		players[p_id].m_exp = 0;
 		players[p_id].m_level = 1;
 		// DB안에 저장된 아이디가 있나?
 		players[p_id].m_lock.unlock();
+
+		players[p_id].m_skil_lock.lock();
+		players[p_id].coolTime = 0;
+		players[p_id].m_skil_lock.unlock();
+
+		players[p_id].m_il.lock();
+		players[p_id].m_item.hp_postion = 5;
+		players[p_id].m_item.mp_postion = 5;
+		players[p_id].m_item.gobline_horn = 0;
+		players[p_id].m_item.oni_bet = 0;
+		players[p_id].m_item.powerup = 0;
+		players[p_id].m_il.unlock();
 		load_player(p_id);
+
+		cout << "[접속]" << players[p_id].m_name << "님께서 접속하셨습니다." << endl;
+
+		add_event(p_id, OP_PLAYER_HEALING, 5000);
+		add_event(p_id, OP_PLAYER_SAVE, 60000);
 
 		players[p_id].m_lock.lock();
 		send_login_info(p_id);
 		players[p_id].m_state = STATE_INGAME;
 		players[p_id].m_lock.unlock();
-
+		send_item_change(p_id, players[p_id].m_item);
 		// 섹터 영역 구하기
 		int row = players[p_id].m_x / (VIEW_RADIUS * 2);
 		int col = players[p_id].m_y / (VIEW_RADIUS * 2);
@@ -1022,17 +1122,20 @@ void process_packet(int p_id, unsigned char* packet)
 					//string txt = "[파티]" + x[1] + "님은 없습니다.";
 					//send_chat(p_id, p_id, txt.c_str());
 				}else {
-					cout << "/party [플레이어 이름]" << endl;
+					string txt = "[명령어] /party [플레이어]";
+					send_chat(p_id, p_id, txt.c_str());
 				}
 			}
 
 			if (x[0] == "/pos") {
 				if (x.size() == 3)
 				{
-					cout << "(" << x[1] << ", " << x[2] << ") 좌표로 이동하였습니다!" << endl;
+					string txt = "(" + x[1] + ", " + x[2] + ") 좌표로 이동하였습니다!";
+					send_chat(p_id, p_id, txt.c_str());
 					player_teleport(p_id, stoi(x[1]), stoi(x[2]));
 				}else {
-					cout << "/pos [x좌표] [y좌표]" << endl;
+					string txt = "[명령어] /pos [x좌표] [y좌표] ";
+					send_chat(p_id, p_id, txt.c_str());
 				}
 			}
 		}else {
@@ -1101,9 +1204,162 @@ void process_packet(int p_id, unsigned char* packet)
 		send_chat(p_id, p_id, txt.c_str());
 		break;
 	}
+	case CS_ITEM_USE: {
+		cs_packet_item_use* my_packet = reinterpret_cast<cs_packet_item_use*>(packet);
+		char item_id = my_packet->id;
+		switch (item_id)
+		{
+			case 0: {
+				players[p_id].m_il.lock();
+				if (players[p_id].m_item.hp_postion > 0)
+				{
+					players[p_id].m_item.hp_postion -= 1;
+					players[p_id].m_il.unlock();
+					players[p_id].m_lock.lock();
+					if(players[p_id].m_hp > 50)
+						players[p_id].m_hp = 100;
+					else
+						players[p_id].m_hp += 50;
+					players[p_id].m_lock.unlock();
+					
+					players[p_id].m_vl.lock();
+					unordered_set <int> old_vl = players[p_id].m_viewlist;
+					players[p_id].m_vl.unlock();
+
+					for (auto& p : old_vl)
+						send_stat_change(p, p_id);
+					send_stat_change(p_id, p_id);
+
+					players[p_id].m_pl.lock();
+					unordered_set<int> pl = players[p_id].m_partylist;
+					players[p_id].m_pl.unlock();
+
+					player_give_party_stat_info(p_id, pl);
+
+					string txt = "[회복] hp 포션을 사용하여 체력을 회복하였습니다.";
+					send_chat(p_id, p_id, txt.c_str());
+				}
+				else {
+					players[p_id].m_il.unlock();
+
+					string txt = "[아이템] hp 포션 아이템이 없습니다.";
+					send_chat(p_id, p_id, txt.c_str());
+				}
+				send_item_change(p_id, players[p_id].m_item);
+				break;
+			}
+			case 1: {
+				players[p_id].m_il.lock();
+				if (players[p_id].m_item.mp_postion > 0)
+				{
+					players[p_id].m_item.mp_postion -= 1;
+					players[p_id].m_il.unlock();
+					players[p_id].m_lock.lock();
+					if (players[p_id].m_mp > 50)
+						players[p_id].m_mp = 100;
+					else
+						players[p_id].m_mp += 50;
+					players[p_id].m_lock.unlock();
+
+					players[p_id].m_vl.lock();
+					unordered_set <int> old_vl = players[p_id].m_viewlist;
+					players[p_id].m_vl.unlock();
+
+					for (auto& p : old_vl)
+						send_stat_change(p, p_id);
+					send_stat_change(p_id, p_id);
+
+					players[p_id].m_pl.lock();
+					unordered_set<int> pl = players[p_id].m_partylist;
+					players[p_id].m_pl.unlock();
+
+					player_give_party_stat_info(p_id, pl);
+
+					string txt = "[회복] mp 포션을 사용하여 마력을 회복하였습니다.";
+					send_chat(p_id, p_id, txt.c_str());
+				}
+				else {
+					players[p_id].m_il.unlock();
+
+					string txt = "[아이템] mp 포션 아이템이 없습니다.";
+					send_chat(p_id, p_id, txt.c_str());
+				}
+				send_item_change(p_id, players[p_id].m_item);
+				break;
+			}
+			default: {
+				break;
+			}
+		}
+		break;
+	}
+	case CS_SKIL_USE: {
+		players[p_id].m_lock.lock();
+		if (players[p_id].m_mp - 30 <= 0)
+		{
+			players[p_id].m_lock.unlock();
+			string txt = "[스킬] 마나가 부족합니다(마나 30필요)";
+			send_chat(p_id, p_id, txt.c_str());
+		}
+		else {
+			players[p_id].m_lock.unlock();
+
+			players[p_id].m_skil_lock.lock();
+			if (players[p_id].coolTime > 0) {
+				players[p_id].m_skil_lock.unlock();
+				string txt = "[스킬] 스킬 쿨타임" + to_string(players[p_id].coolTime) + "초 남았습니다.";
+				send_chat(p_id, p_id, txt.c_str());
+			}
+			else
+			{
+				players[p_id].coolTime = 10;
+				players[p_id].m_skil_lock.unlock();
+
+				players[p_id].m_vl.lock();
+				unordered_set<int> vl = players[p_id].m_viewlist;
+				players[p_id].m_vl.unlock();
+
+				players[p_id].m_lock.lock();
+				if (players[p_id].m_hp > 30)
+					players[p_id].m_hp = 100;
+				else
+					players[p_id].m_hp += 30;
+				players[p_id].m_mp -= 30;
+				players[p_id].m_lock.unlock();
+				send_stat_change(p_id, p_id);
+				for (const auto& p : vl)
+				{
+					if (is_npc(p)) continue;
+					if (can_buf(p_id, p))
+					{
+						players[p].m_lock.lock();
+						if (players[p].m_hp > 30)
+							players[p].m_hp = 100;
+						else
+							players[p].m_hp += 30;
+						players[p].m_lock.unlock();
+						send_stat_change(p, p);
+						send_stat_change(p_id, p);
+						send_stat_change(p, p_id);
+					}
+				}
+
+				players[p_id].m_pl.lock();
+				unordered_set<int> pl = players[p_id].m_partylist;
+				players[p_id].m_pl.unlock();
+				player_give_party_stat_info(p_id, pl);
+				string txt = "[스킬] 회복 버프 스킬을 사용하였습니다!";
+				send_chat(p_id, p_id, txt.c_str());
+
+				add_event(p_id, OP_PLAYER_SKIL_COOL, 1000);
+			}
+		}
+		break;
+	}
 	default :
 		cout << "Unknown Packet Type [" << p->type << "] Error\n";
 		exit(-1);
+		break;
 	}
 }
 
@@ -1155,10 +1411,12 @@ void do_accept(SOCKET s_socket, EX_OVER *a_over)
 
 void disconnect(int p_id)
 {
+	players[p_id].m_vl.lock();
+	unordered_set <int> old_vl = players[p_id].m_viewlist;
+	players[p_id].m_vl.unlock();
 
 	players[p_id].m_lock.lock();
 	save_player(p_id);
-	unordered_set <int> old_vl = players[p_id].m_viewlist;
 	players[p_id].m_state = STATE_CONNECTED;
 	closesocket(players[p_id].m_s);
 	players[p_id].m_state = STATE_FREE;
@@ -1175,6 +1433,7 @@ void disconnect(int p_id)
 		players[cl].m_lock.unlock();
 	}
 	party_leave(p_id);
+	cout << "[퇴장]" << players[p_id].m_name << "님께서 퇴장하셨습니다." << endl;
 }
 
 void worker()
@@ -1430,10 +1689,70 @@ void do_timer()
 					players[ev.object_id].m_state = STATE_INGAME;
 					players[ev.object_id].m_hp = 100;
 					players[ev.object_id].m_lock.unlock();
-					for (auto& v : players[ev.object_id].m_viewlist) {
+
+					players[ev.object_id].m_vl.lock();
+					unordered_set <int> old_vl = players[ev.object_id].m_viewlist;
+					players[ev.object_id].m_vl.unlock();
+					for (auto& v : old_vl) {
 						if (is_npc(v)) continue;
 						send_add_object(v, ev.object_id);
 					}
+					break;
+				}
+				/*case OP_PLAYER_HEALING: {
+					players[ev.object_id].m_lock.try_lock();
+					if(players[ev.object_id].m_state != STATE_INGAME)
+						players[ev.object_id].m_lock.unlock();
+					else {
+						if (players[ev.object_id].m_hp < 100) {
+							if (int(players[ev.object_id].m_hp * 1 / 10) < 100)
+								players[ev.object_id].m_hp += int(players[ev.object_id].m_hp * 1 / 10);
+							else
+								players[ev.object_id].m_hp = 100;
+							players[ev.object_id].m_lock.unlock();
+
+							players[ev.object_id].m_vl.lock();
+							unordered_set <int> old_vl = players[ev.object_id].m_viewlist;
+							players[ev.object_id].m_vl.unlock();
+
+							for (auto& p : old_vl)
+								send_stat_change(p, ev.object_id);
+							send_stat_change(ev.object_id, ev.object_id);
+
+							players[ev.object_id].m_pl.lock();
+							unordered_set<int> pl = players[ev.object_id].m_partylist;
+							players[ev.object_id].m_pl.unlock();
+
+							player_give_party_stat_info(ev.object_id, pl);
+						}
+						add_event(ev.object_id, OP_PLAYER_HEALING, 5000);
+					}
+					break;
+				}*/
+				//case OP_PLAYER_SAVE: {
+				//	players[ev.object_id].m_lock.try_lock();
+				//	if (players[ev.object_id].m_state != STATE_INGAME)
+				//		players[ev.object_id].m_lock.unlock();
+				//	else {
+				//		save_player(ev.object_id);
+				//		add_event(ev.object_id, OP_PLAYER_SAVE, 60000);
+				//	}
+				//	break;
+				//}
+				case OP_PLAYER_SKIL_COOL: {
+					players[ev.object_id].m_skil_lock.lock();
+
+					if (players[ev.object_id].coolTime > 0)
+					{
+						players[ev.object_id].coolTime -= 1;
+						players[ev.object_id].m_skil_lock.unlock();
+						add_event(ev.object_id, OP_PLAYER_SKIL_COOL, 1000);
+					}
+					else {
+						players[ev.object_id].m_skil_lock.unlock();
+					}
+				}
+				default: {
 					break;
 				}
 			}
@@ -1481,10 +1800,21 @@ int API_damage_player(lua_State* L)
 		players[p_id].m_exp /= 2;
 		players[p_id].m_hp = 100;
 		players[p_id].m_lock.unlock();
-		player_teleport(p_id, 0, 0);
+
+		int x = rand() % 500;
+		int y = rand() % 500;
+		player_teleport(p_id, x, y);
+		string txt = "[죽음] 죽었습니다.";
+		send_chat(p_id, p_id, txt.c_str());
 	} else 
 		players[p_id].m_lock.unlock();
-	for (auto& p : players[p_id].m_viewlist) {
+
+	players[p_id].m_vl.lock();
+	unordered_set<int> vl = players[p_id].m_viewlist;
+	players[p_id].m_vl.unlock();
+
+	for (auto& p : vl) {
+		if (is_npc(p)) continue;
 		send_stat_change(p, p_id);
 	}
 	send_stat_change(p_id, p_id);
@@ -1495,7 +1825,7 @@ int API_damage_player(lua_State* L)
 
 	player_give_party_stat_info(p_id, pl);
 
-	string txt = "[전투]" + string(players[obj_id].m_name) + "에게 데미지 30을 받았다!";
+	string txt = "[전투]" + string(players[obj_id].m_name) + "에게 데미지 10을 받았다!";
 	send_chat(p_id, p_id, txt.c_str());
 	return 0;
 }
@@ -1510,17 +1840,21 @@ int main()
 		pl.m_id = i;
 		pl.m_state = STATE_FREE;
 		pl.last_move_time = 0;
-		pl.m_obj_class = 0;
+		pl.m_obj_class = OB_PLAYER;
 		// pl.m_viewlist.clear();
 		
 		if (true == is_npc(i)) {
 			
 			pl.m_x = rand() % WORLD_WIDTH;
 			pl.m_y = rand() % WORLD_HEIGHT;
-			pl.m_obj_class = rand() % 3 + 1;
+			if(i < MAX_VILIGER + NPC_ID_START)
+				pl.m_obj_class = rand() % 2 + OB_VILIGER;
+			else
+				pl.m_obj_class = rand() % (OB_END - OB_MONSTER - 1) + OB_MONSTER + 1;
+
 			switch (pl.m_obj_class)
 			{
-				case 1: {
+				case OB_VILIGER: {
 					pl.m_hp = 100;
 					pl.m_level = 1;
 					pl.m_state = STATE_INGAME;
@@ -1528,11 +1862,19 @@ int main()
 					strcpy_s(pl.m_name, s.c_str());
 					break;
 				}
-				case 2: {
+				case OB_GQUESTOR: {
 					pl.m_hp = 100;
 					pl.m_level = 1;
 					pl.m_state = STATE_INGAME;
-					string s = "고블린";
+					string s = "마을촌장";
+					strcpy_s(pl.m_name, s.c_str());
+					break;
+				}
+				case OB_GOBBLINE: {
+					pl.m_hp = 100;
+					pl.m_level = 1;
+					pl.m_state = STATE_INGAME;
+					string s = "유령";
 					strcpy_s(pl.m_name, s.c_str());
 					pl.L = luaL_newstate();
 					luaL_openlibs(pl.L);
@@ -1549,11 +1891,11 @@ int main()
 					lua_register(pl.L, "API_get_y", API_get_y);
 					break;
 				}
-				case 3: {
+				case OB_ONI: {
 					pl.m_hp = 100;
 					pl.m_level = 2;
 					pl.m_state = STATE_INGAME;
-					string s = "도깨비";
+					string s = "사신";
 					strcpy_s(pl.m_name, s.c_str());
 					pl.L = luaL_newstate();
 					luaL_openlibs(pl.L);
@@ -1569,11 +1911,11 @@ int main()
 					lua_register(pl.L, "API_get_y", API_get_y);
 					break;
 				}
-				case 4: {
+				case OB_GHOST: {
 					pl.m_hp = 100;
 					pl.m_level = 3;
 					pl.m_state = STATE_INGAME;
-					string s = "보스";
+					string s = "뱀파이어";
 					strcpy_s(pl.m_name, s.c_str());
 					pl.L = luaL_newstate();
 					luaL_openlibs(pl.L);

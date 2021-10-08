@@ -7,6 +7,9 @@ constexpr int MAX_BUFFER = 1024;
 constexpr int NPC_ID_START = 5000;		// NPC의 ID가 시작하는 지점, 따라서 플레이어는 0부터 NPC_ID_START까지의 ID를 가짐
 					// NPC의 개수는 MAX_USER - NPC_ID_START = 20000,  20만 마리의 NPC가 존재
 
+constexpr int MAX_VILIGER =  10000;
+constexpr int MAX_MONSTER = 190000;
+
 #define WORLD_WIDTH		2000
 #define WORLD_HEIGHT	2000
 
@@ -26,6 +29,8 @@ constexpr int Col = WORLD_HEIGHT / (VIEW_RADIUS * 2) + 1;
 #define CS_PARTY_INVITE 7	// 파티 초대
 #define CS_PARTY_ACCEPT 8	// 파티 수락
 #define CS_PARTY_DENY 9		// 파티 거절
+#define CS_ITEM_USE 10
+#define CS_SKIL_USE 11
 
 #define SC_LOGIN_OK		1	// CS_LOGIN의 응답 패킷, 서버에서 클라이언트의 접속을 수락
 #define SC_LOGIN_FAIL		2	// CS_LOGIN의 응답 패킷, 서버에서 클라이언트의 접속을 거절
@@ -37,6 +42,17 @@ constexpr int Col = WORLD_HEIGHT / (VIEW_RADIUS * 2) + 1;
 #define SC_PARTY_INVITE	8
 #define SC_PARTY_JOIN	9
 #define SC_PARTY_LEAVE	10
+#define SC_ITEM_CHANGE	11
+
+enum OBJCET_TYPE { OB_PLAYER, OB_VILIGER, OB_GQUESTOR, OB_CQUESTOR, OB_MONSTER, OB_GOBBLINE, OB_ONI, OB_GHOST, OB_END };
+
+struct ITEM {
+	char hp_postion;
+	char mp_postion;
+	char powerup;
+	char gobline_horn;
+	char oni_bet;
+};
 
 #pragma pack(push ,1)
 
@@ -45,7 +61,7 @@ struct sc_packet_login_ok {
 	char type;
 	int id;
 	short	x, y;
-	int	HP, LEVEL, EXP;
+	int	HP, MP, LEVEL, EXP;
 };
 
 struct sc_packet_login_fail {
@@ -73,7 +89,7 @@ struct sc_packet_stat_change {
 	unsigned char size;
 	char	type;
 	int	id;
-	int	HP, LEVEL, EXP;
+	int	HP, MP, LEVEL, EXP;
 	char STATE;
 };
 
@@ -111,6 +127,12 @@ struct sc_packet_party_leave {
 	unsigned char size;
 	char type;
 	int id;
+};
+
+struct sc_packet_item_change {
+	unsigned char size;
+	char type;
+	ITEM item;
 };
 
 struct cs_packet_login {
@@ -163,6 +185,17 @@ struct cs_packet_party_deny {
 	unsigned char	size;
 	char	type;
 	int		id;
+};
+
+struct cs_packet_item_use {
+	unsigned char	size;
+	char	type;
+	char	id;
+};
+
+struct cs_packet_skil_use {
+	unsigned char	size;
+	char	type;
 };
 
 
